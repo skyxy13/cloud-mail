@@ -6,7 +6,7 @@ import constant from '../const/constant';
 const migrations = [
 	'intDB', 'v2_3DB', 'v2_4DB', 'v2_5DB', 'v2_6DB', 'v2_7DB', 'v2_8DB',
 	'v3_0DB', 'v3_1DB', 'v3_2DB', 'v3_3DB', 'v3_4DB', 'v3_5DB', 'v3_6DB',
-	'v3_7DB', 'v3_8DB', 'v3_9DB', 'v3_10DB'
+	'v3_7DB', 'v3_8DB', 'v3_9DB', 'v3_10DB', 'v3_11DB'
 ];
 
 const dbInit = {
@@ -36,6 +36,7 @@ const dbInit = {
 		await this.v3_8DB(c);
 		await this.v3_9DB(c);
 		await this.v3_10DB(c);
+		await this.v3_11DB(c);
 		await userService.initAdmin(c);
 		await this.recordMigrations(c);
 		await settingService.refresh(c);
@@ -51,6 +52,60 @@ const dbInit = {
 			));
 		} catch (e) {
 			console.warn(`sql skip:${e.message}`);
+		}
+	},
+
+	async v3_11DB(c) {
+		const statements = [
+			// 独立 Reply-To
+			`ALTER TABLE email ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''`,
+			// 域名每日发件配额：{"example.com":{limit:200}}
+			`ALTER TABLE setting ADD COLUMN domain_daily_quota TEXT NOT NULL DEFAULT '{}'`,
+			`CREATE TABLE IF NOT EXISTS email_schedule (
+				schedule_id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id INTEGER NOT NULL,
+				account_id INTEGER NOT NULL,
+				params TEXT NOT NULL,
+				send_time DATETIME NOT NULL,
+				status INTEGER NOT NULL DEFAULT 0,
+				attempts INTEGER NOT NULL DEFAULT 0,
+				error TEXT NOT NULL DEFAULT '',
+				create_time DATETIME DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE TABLE IF NOT EXISTS draft (
+				draft_id INTEGER PRIMARY KEY AUTOINCREMENT,
+				user_id INTEGER NOT NULL,
+				account_id INTEGER,
+				name TEXT NOT NULL DEFAULT '',
+				send_email TEXT NOT NULL DEFAULT '',
+				receive_email TEXT NOT NULL DEFAULT '[]',
+				cc_email TEXT NOT NULL DEFAULT '[]',
+				bcc_email TEXT NOT NULL DEFAULT '[]',
+				subject TEXT NOT NULL DEFAULT '',
+				content TEXT NOT NULL DEFAULT '',
+				text TEXT NOT NULL DEFAULT '',
+				many_type TEXT NOT NULL DEFAULT 'together',
+				reply_to TEXT NOT NULL DEFAULT '',
+				create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+				update_time DATETIME DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE TABLE IF NOT EXISTS suppression (
+				email TEXT PRIMARY KEY NOT NULL COLLATE NOCASE,
+				reason TEXT NOT NULL DEFAULT '',
+				provider TEXT NOT NULL DEFAULT '',
+				email_id INTEGER,
+				create_time DATETIME DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_email_schedule_due ON email_schedule(status, send_time)`,
+			`CREATE INDEX IF NOT EXISTS idx_draft_user_id ON draft(user_id, update_time)`
+		];
+
+		for (const statement of statements) {
+			try {
+				await c.env.db.prepare(statement).run();
+			} catch (e) {
+				console.warn(`sql skip:${e.message}`);
+			}
 		}
 	},
 

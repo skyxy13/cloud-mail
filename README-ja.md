@@ -59,7 +59,7 @@
 
 - **💻 レスポンシブデザイン**: デスクトップとほとんどのモバイルブラウザに自動で対応します。
 
-- **📧 メール送信**: Cloudflare Email と Resend / Mailtrap / AhaSend / Plunk を統合し、メールを送信できます。
+- **📧 メール送信**: Cloudflare Email と Resend / Mailtrap / AhaSend / Plunk を統合し、予約送信・Reply-To・抑止リスト・ドメイン別の 1 日あたり送信上限に対応します。
 
 - **🛡️ 管理者機能**: RBAC ベースのアクセス制御により、ユーザーとメールを管理できます。
 

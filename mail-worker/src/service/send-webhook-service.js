@@ -3,6 +3,7 @@ import settingService from './setting-service';
 import BizError from '../error/biz-error';
 import { emailConst } from '../const/entity-const';
 import { sendProviderConst } from './send-provider-service';
+import suppressionService from './suppression-service';
 
 const emailStatus = emailConst.status;
 // 校验回调时间戳的有效期，防止重放
@@ -257,7 +258,10 @@ const sendWebhookService = {
 				providerId: event.message_id,
 				status,
 				message: status === emailStatus.DELIVERED ? null
-					: pickDetail(event, ['response', 'response_code', 'bounce_category', 'reason'])
+					: pickDetail(event, ['response', 'response_code', 'bounce_category', 'reason']),
+				recipient: event.email,
+				// bounce 是永久退信、spam 是投诉，进入抑制名单；soft bounce 只是延迟
+				suppress: type === 'bounce' || type === 'spam'
 			};
 		}
 
@@ -269,7 +273,9 @@ const sendWebhookService = {
 				providerId: data.id,
 				status,
 				message: status === emailStatus.DELIVERED ? null
-					: pickDetail(data.delivery_attempt || data, ['classification', 'smtp_code', 'enhanced_status_code', 'response', 'reason'])
+					: pickDetail(data.delivery_attempt || data, ['classification', 'smtp_code', 'enhanced_status_code', 'response', 'reason']),
+				recipient: data.recipient,
+				suppress: event.type === 'message.bounced' || event.type === 'message.complained'
 			};
 		}
 
@@ -285,23 +291,30 @@ const sendWebhookService = {
 				else status = null;
 			}
 			if (!status) return null;
+			const transient = String(data.bounceType || '').toLowerCase() === 'transient';
 			return {
 				providerId: data.emailId || data.email_id || event.emailId || event.email_id || data.id,
 				status,
 				message: status === emailStatus.DELIVERED ? null
-					: pickDetail(data, ['bounceType', 'bouncedAt', 'messageId', 'feedbackType'])
+					: pickDetail(data, ['bounceType', 'bouncedAt', 'messageId', 'feedbackType']),
+				recipient: event.contact?.email || data.recipient,
+				// 临时退信（Transient）不加入抑制名单
+				suppress: !transient && (status === emailStatus.BOUNCED || status === emailStatus.COMPLAINED)
 			};
 		}
 
 		const status = resendEvents[event.type];
 		if (!status) return null;
 		const data = event.data || {};
+		const transient = String(data.bounce?.type || '').toLowerCase() === 'transient';
 		return {
 			providerId: data.email_id,
 			status,
 			message: status === emailStatus.DELIVERED || status === emailStatus.SENT
 				? null
-				: (data.bounce ? JSON.stringify(data.bounce) : (data.failed?.reason || null))
+				: (data.bounce ? JSON.stringify(data.bounce) : (data.failed?.reason || null)),
+			recipient: Array.isArray(data.to) ? data.to[0] : data.to,
+			suppress: !transient && (status === emailStatus.BOUNCED || status === emailStatus.COMPLAINED)
 		};
 	},
 
@@ -386,6 +399,15 @@ const sendWebhookService = {
 
 			const result = this.mapEvent(provider, event);
 			if (!result) continue;
+
+			// 永久退信 / 投诉的地址写入抑制名单，后续发件会被直接拦下
+			if (result.suppress && result.recipient) {
+				await suppressionService.suppress(c, {
+					email: result.recipient,
+					reason: result.message || String(result.status),
+					provider
+				});
+			}
 
 			const applied = await this.applyStatus(c, provider, result.providerId, result.status, result.message);
 			if (applied && !applied.ignored) {

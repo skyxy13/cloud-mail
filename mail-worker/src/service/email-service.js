@@ -29,6 +29,7 @@ import forwardMime from '../utils/forward-mime';
 import verifyUtils from '../utils/verify-utils';
 import { notifyMailWsFromContext } from '../websocket/notify';
 import proxyService from './proxy-service';
+import suppressionService from './suppression-service';
 
 // 发件渠道标识，写入 email.provider，便于统计与回调校验
 const PROVIDER_INTERNAL = 'internal';
@@ -418,8 +419,11 @@ const emailService = {
 			text, //邮件纯文本
 			content, //邮件内容
 			subject, //邮件标题
+			replyTo, //独立回复地址（Reply-To）
 			attachments = [] //附件
 		} = params;
+
+		replyTo = this.normalizeReplyTo(replyTo);
 
 		ccEmail = this.normalizeAddressList(ccEmail);
 		bccEmail = this.normalizeAddressList(bccEmail);
@@ -514,6 +518,17 @@ const emailService = {
 			throw new BizError(t('noSendProvider'));
 		}
 
+		// 退信抑制名单：站外收件人命中过永久退信/投诉就不再发送
+		if (!allInternal) {
+			const externalRecipients = [...receiveEmail, ...ccEmail, ...bccEmail].filter(address => {
+				return !domainList.includes('@' + emailUtils.getDomain(address));
+			});
+			await this.checkSuppression(c, externalRecipients);
+		}
+
+		// 域名每日发件配额
+		await this.checkDomainQuota(c, domain, quotaCount);
+
 		//没有发件人名字自动截取
 		if (!name) {
 			name = emailUtils.getName(accountRow.email);
@@ -543,6 +558,7 @@ const emailService = {
 			subject,
 			text,
 			html,
+			replyTo,
 			attachments: [...imageDataList, ...attachments],
 			sendType,
 			messageId: emailRow.messageId
@@ -575,6 +591,7 @@ const emailService = {
 				sendEmail: accountRow.email,
 				ccEmail, bccEmail,
 				messageId: emailRow.messageId,
+				replyTo,
 				sendType, useCloudflareEmail, roleRow, r2Domain,
 				imageDataList, attachments
 			}
@@ -713,6 +730,7 @@ const emailService = {
 						subject: sendParams.subject,
 						text: sendParams.text,
 						html: sendParams.html,
+						replyTo: sendParams.replyTo,
 						headers,
 						attachments
 					});
@@ -749,7 +767,7 @@ const emailService = {
 	async saveSentEmail(c, params) {
 		const {
 			accountId, userId, name, subject, text, html, sendEmail, receiveEmail,
-			ccEmail = [], bccEmail = [],
+			ccEmail = [], bccEmail = [], replyTo = '',
 			providerId, messageId, sendType, useCloudflareEmail,
 			roleRow, r2Domain, attachments, provider
 		} = params;
@@ -758,6 +776,7 @@ const emailService = {
 		}));
 		const emailData = {
 			sendEmail, name, subject, text, accountId, userId,
+			replyTo: replyTo || '',
 			content: this.imgReplace(html, imageDataList, r2Domain),
 			status: useCloudflareEmail ? emailConst.status.DELIVERED : emailConst.status.SENT,
 			type: emailConst.type.SEND,
@@ -777,6 +796,7 @@ const emailService = {
 		if (roleRow.sendCount && roleRow.sendType !== 'internal') {
 			await userService.incrUserSendCount(c, deliveredCount, userId);
 		}
+		await this.addDomainQuotaUsage(c, emailUtils.getDomain(sendEmail), deliveredCount);
 
 		const emailResult = await orm(c).insert(email).values(emailData).returning().get();
 
@@ -902,6 +922,50 @@ const emailService = {
 		}
 
 		return result;
+	},
+
+	normalizeReplyTo(replyTo) {
+		if (!replyTo) return '';
+		const value = String(replyTo).trim();
+		if (!value) return '';
+		if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) {
+			throw new BizError(t('notEmail'));
+		}
+		return value;
+	},
+
+	// 退信抑制名单：命中说明该地址曾永久退信或被投诉
+	async checkSuppression(c, emailList) {
+		if (!emailList || emailList.length === 0) return;
+		const blocked = await suppressionService.blocked(c, emailList);
+		if (blocked.length === 0) return;
+		throw new BizError(t('recipientSuppressed', {
+			emails: blocked.map(item => item.email).join(', ')
+		}), 403);
+	},
+
+	// 域名每日配额：limit 为 0 表示不限
+	async checkDomainQuota(c, domain, count) {
+		const { domainDailyQuota } = await settingService.query(c);
+		const limit = Number(domainDailyQuota?.[domain]) || 0;
+		if (!limit) return;
+
+		const used = await this.domainUsedToday(c, domain);
+		if (used + count > limit) {
+			throw new BizError(t('domainQuotaLimit', { domain, limit, used }), 403);
+		}
+	},
+
+	async domainUsedToday(c, domain) {
+		const key = kvConst.DOMAIN_SEND_DAY_COUNT + domain + ':' + dayjs().format('YYYY-MM-DD');
+		return Number(await c.env.kv.get(key)) || 0;
+	},
+
+	async addDomainQuotaUsage(c, domain, count) {
+		if (!domain || !count) return;
+		const key = kvConst.DOMAIN_SEND_DAY_COUNT + domain + ':' + dayjs().format('YYYY-MM-DD');
+		const used = Number(await c.env.kv.get(key)) || 0;
+		await c.env.kv.put(key, String(used + count), { expirationTtl: 60 * 60 * 48 });
 	},
 
 	// 单封邮件体积校验：正文 + 附件（未编码前的字节数）不能超过服务商限制

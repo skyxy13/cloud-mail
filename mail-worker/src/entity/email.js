@@ -24,6 +24,8 @@ export const email = sqliteTable('email', {
 	resendEmailId: text('resend_email_id'),
 	// 实际发件的渠道：internal / cloudflare / resend / mailtrap / ahasend / plunk
 	provider: text('provider').default('').notNull(),
+	// 独立回复地址（Reply-To），为空表示不设置
+	replyTo: text('reply_to').default('').notNull(),
 	message: text('message'),
 	unread: integer('unread').default(0).notNull(),
 	createTime: text('create_time').default(sql`CURRENT_TIMESTAMP`).notNull(),

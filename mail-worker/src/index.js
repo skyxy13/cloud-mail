@@ -8,6 +8,7 @@ import oauthService from './service/oauth-service';
 import analysisService from './service/analysis-service';
 import { handleWsUpgrade } from './websocket/connect';
 import proxyService from './service/proxy-service';
+import scheduleService from './service/schedule-service';
 export { MailHub } from './websocket/hub'; // Durable Object 必须从 Worker 入口导出
 export default {
 	 async fetch(req, env, ctx) {
@@ -45,8 +46,9 @@ export default {
 	},
 	email: email,
 	async scheduled(c, env, ctx) {
-		if (c.cron === '*/30 * * * *') {
-			await analysisService.refreshEchartsCache({ env })
+		// 每 5 分钟处理到期的定时邮件
+		if (c.cron === '*/5 * * * *') {
+			await scheduleService.runDue({ env })
 			return;
 		}
 

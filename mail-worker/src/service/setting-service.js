@@ -11,9 +11,30 @@ import verifyRecordService from './verify-record-service';
 import userContext from '../security/user-context';
 import domainUtils from '../utils/domain-uitls';
 import sendProviderService from './send-provider-service';
+import dayjs from 'dayjs';
 
 // webhook 校验密钥按服务商配置，留空表示不校验
 const webhookSecretProviders = sendProviderService.sendProviderList.map(item => item.id);
+
+function normalizeDomainQuota(value) {
+	let source = {};
+	if (typeof value === 'string') {
+		try {
+			source = JSON.parse(value) || {};
+		} catch (e) {
+			source = {};
+		}
+	} else if (value && typeof value === 'object') {
+		source = value;
+	}
+
+	const quota = {};
+	Object.keys(source).forEach(domain => {
+		const limit = Number(source[domain]);
+		if (Number.isFinite(limit) && limit > 0) quota[domain] = Math.floor(limit);
+	});
+	return quota;
+}
 
 function normalizeWebhookSecrets(value) {
 	let source = {};
@@ -41,6 +62,7 @@ const settingService = {
 		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
 		settingRow.sendProviders = sendProviderService.parseProviders(settingRow.sendProviders, settingRow.resendTokens);
 		settingRow.sendWebhookSecrets = normalizeWebhookSecrets(settingRow.sendWebhookSecrets);
+		settingRow.domainDailyQuota = normalizeDomainQuota(settingRow.domainDailyQuota);
 		// 记录当前代码要求的数据库版本，query 时会比对
 		settingRow.dbVersion = constant.DB_VERSION;
 		settingRow.r2Domain = '';
@@ -100,6 +122,7 @@ const settingService = {
 		// KV 缓存可能还是升级前的数据，这里统一补齐发件服务配置
 		setting.sendProviders = sendProviderService.parseProviders(setting.sendProviders, setting.resendTokens);
 		setting.sendWebhookSecrets = normalizeWebhookSecrets(setting.sendWebhookSecrets);
+		setting.domainDailyQuota = normalizeDomainQuota(setting.domainDailyQuota);
 
 		setting.emailPrefixFilter = setting.emailPrefixFilter.split(",").filter(Boolean);
 		setting.autoRefresh = Number(setting.autoRefresh) === 1 ? 1 : 2; // 1 关闭，2 开启
@@ -139,6 +162,7 @@ const settingService = {
 		settingRow.hasCfEmail = !!c.env.email
 		// 前台发件服务下拉选项，新增服务商时只改这里即可
 		settingRow.sendProviderList = sendProviderService.sendProviderList
+		settingRow.domainQuotaUsage = await this.domainQuotaUsage(c, settingRow.domainList)
 
 		let regVerifyOpen = false
 		let addVerifyOpen = false
@@ -213,6 +237,20 @@ const settingService = {
 		params.sendProviders = JSON.stringify(sendProviders);
 		params.sendWebhookSecrets = JSON.stringify(mergedWebhookSecrets);
 
+		// 域名每日配额：提交的域名按数值合并，0 或空表示不限（删除该域名）
+		const mergedQuota = { ...settingData.domainDailyQuota };
+		const incomingQuota = params.domainDailyQuota && typeof params.domainDailyQuota === 'object'
+			? params.domainDailyQuota : {};
+		Object.keys(incomingQuota).forEach(domain => {
+			const limit = Number(incomingQuota[domain]);
+			if (!Number.isFinite(limit) || limit <= 0) {
+				delete mergedQuota[domain];
+				return;
+			}
+			mergedQuota[domain] = Math.floor(limit);
+		});
+		params.domainDailyQuota = JSON.stringify(mergedQuota);
+
 		if (params.autoRefresh !== undefined) {
 			params.autoRefresh = Number(params.autoRefresh) === 1 ? 1 : 2;
 		}
@@ -223,6 +261,17 @@ const settingService = {
 
 		await orm(c).update(setting).set({ ...params }).returning().get();
 		await this.refresh(c);
+	},
+
+	// 各域名今天已发出的封数（KV 计数），用于设置页展示配额使用情况
+	async domainQuotaUsage(c, domainList) {
+		const usage = {};
+		const date = dayjs().format('YYYY-MM-DD');
+		for (const item of domainList || []) {
+			const domain = String(item).replace(/^@/, '');
+			usage[domain] = Number(await c.env.kv.get(KvConst.DOMAIN_SEND_DAY_COUNT + domain + ':' + date)) || 0;
+		}
+		return usage;
 	},
 
 	async deleteBackground(c) {

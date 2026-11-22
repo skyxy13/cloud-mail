@@ -82,6 +82,11 @@ const en = {
 	notAdmin: 'The entered email is not an administrator email',
 	emailExistDatabase: 'Email already exists in the database',
 	notConfigOss: 'Object storage not configured',
+	invalidSendTime: 'Invalid scheduled send time',
+	sendTimeTooEarly: 'Scheduled send time must be at least 1 minute later',
+	sendTimeTooLate: 'Scheduled send supports at most 30 days ahead',
+	recipientSuppressed: 'These recipients are on the suppression list: {{emails}}',
+	domainQuotaLimit: '{{domain}} daily quota used {{used}}/{{limit}}, this send exceeds the limit',
 	dbUpgradeRequired: 'Database schema is out of date ({{current}} -> {{target}}). Visit /init/{jwt_secret} once to upgrade.',
 	perms: {
 		"邮件": "Emails",

@@ -326,6 +326,7 @@ const sendProviderService = {
 		if (message.bcc?.length > 0) sendForm.bcc = message.bcc;
 		if (message.text) sendForm.text = message.text;
 		if (message.html) sendForm.html = message.html;
+		if (message.replyTo) sendForm.replyTo = message.replyTo;
 		if (message.headers && Object.keys(message.headers).length > 0) sendForm.headers = message.headers;
 
 		if (message.attachments?.length > 0) {
@@ -363,6 +364,7 @@ const sendProviderService = {
 		if (message.bcc?.length > 0) body.bcc = toAddressList(message.bcc);
 		if (message.text) body.text = message.text;
 		if (message.html) body.html = message.html;
+		if (message.replyTo) body.reply_to = { email: message.replyTo };
 		if (message.headers && Object.keys(message.headers).length > 0) body.headers = message.headers;
 
 		if (message.attachments?.length > 0) {
@@ -409,6 +411,7 @@ const sendProviderService = {
 						subject: message.subject,
 						...(message.text ? { text_body: message.text } : {}),
 						...(message.html ? { html_body: message.html } : {}),
+						...(message.replyTo ? { reply_to: { email: message.replyTo } } : {}),
 						...(attachments.length > 0 ? { attachments } : {}),
 						...(message.headers && Object.keys(message.headers).length > 0 ? { headers: message.headers } : {})
 					}
@@ -430,6 +433,7 @@ const sendProviderService = {
 			subject: message.subject,
 			...(message.text ? { text_content: message.text } : {}),
 			...(message.html ? { html_content: message.html } : {}),
+			...(message.replyTo ? { reply_to: { email: message.replyTo } } : {}),
 			...(attachments.length > 0 ? { attachments } : {}),
 			...(message.headers && Object.keys(message.headers).length > 0 ? { headers: message.headers } : {})
 		};
@@ -469,6 +473,7 @@ const sendProviderService = {
 			from: { email: message.from.email, ...(message.from.name ? { name: message.from.name } : {}) }
 		};
 
+		if (message.replyTo) body.reply = message.replyTo;
 		if (message.headers && Object.keys(message.headers).length > 0) body.headers = message.headers;
 
 		if (message.attachments?.length > 0) {

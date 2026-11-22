@@ -23,6 +23,10 @@ const exclude = [
 
 const requirePerms = [
 	'/email/send',
+	'/email/schedule',
+	'/suppression/list',
+	'/suppression/add',
+	'/suppression/delete',
 	'/email/delete',
 	'/account/list',
 	'/account/delete',
@@ -63,7 +67,7 @@ const requirePerms = [
 
 const premKey = {
 	'email:delete': ['/email/delete'],
-	'email:send': ['/email/send'],
+	'email:send': ['/email/send', '/email/schedule'],
 	'account:add': ['/account/add'],
 	'account:query': ['/account/list'],
 	'account:delete': ['/account/delete'],
@@ -81,8 +85,8 @@ const premKey = {
 	'user:delete': ['/user/delete','/user/deleteAccount'],
 	'all-email:query': ['/allEmail/list','/allEmail/latest'],
 	'all-email:delete': ['/allEmail/delete','/allEmail/batchDelete'],
-	'setting:query': ['/setting/query'],
-	'setting:set': ['/setting/set', '/setting/setBackground','/setting/deleteBackground','/setting/setBlacklist'],
+	'setting:query': ['/setting/query', '/suppression/list'],
+	'setting:set': ['/setting/set', '/setting/setBackground','/setting/deleteBackground','/setting/setBlacklist', '/suppression/add', '/suppression/delete'],
 	'analysis:query': ['/analysis/echarts'],
 	'reg-key:add': ['/regKey/add'],
 	'reg-key:query': ['/regKey/list','/regKey/history'],

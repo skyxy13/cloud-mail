@@ -82,6 +82,11 @@ const zh = {
 	notAdmin: '输入的邮箱不是管理员邮箱',
 	emailExistDatabase: '有邮箱已存在数据库中',
 	notConfigOss: '对象存储未配置',
+	invalidSendTime: '定时发送时间格式不正确',
+	sendTimeTooEarly: '定时发送时间至少要在 1 分钟之后',
+	sendTimeTooLate: '定时发送最多支持 30 天以内',
+	recipientSuppressed: '以下收件人在退信抑制名单中，无法发送：{{emails}}',
+	domainQuotaLimit: '{{domain}} 今日发件配额已用 {{used}}/{{limit}}，本次发送超出限额',
 	dbUpgradeRequired: '数据库结构需要升级（当前 {{current}}，代码要求 {{target}}），请访问一次 /init/{jwt_secret} 完成升级',
 	perms: {
 		"邮件": "邮件",

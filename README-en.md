@@ -59,7 +59,7 @@ With only one domain, you can create multiple different email addresses, similar
 
 - **💻 Responsive Design**: Automatically adapts to both desktop and most mobile browsers.
 
-- **📧 Email Sending**: Integrated with Cloudflare Email and Resend / Mailtrap / AhaSend / Plunk for sending email.
+- **📧 Email Sending**: Integrated with Cloudflare Email and Resend / Mailtrap / AhaSend / Plunk, with scheduled sending, Reply-To, suppression list and per-domain daily quota.
 
 - **🛡️ Admin Features**: Admin controls for user and email management with RBAC-based access control.
 

@@ -42,6 +42,7 @@
               <div class="address-actions">
                 <button type="button" class="address-toggle" v-if="form.manyType !== 'divide' && !showCc" @click.stop="openCc">CC</button>
                 <button type="button" class="address-toggle" v-if="form.manyType !== 'divide' && !showBcc" @click.stop="openBcc">BCC</button>
+                <button type="button" class="address-toggle" v-if="form.manyType !== 'divide' && !showReplyTo" @click.stop="openReplyTo">Reply-To</button>
                 <Icon icon="fa7-solid:user-plus" width="20" height="20" class="add-contact" @click.stop="openContacts('receive')" />
               </div>
             </template>
@@ -103,6 +104,8 @@
             </template>
           </el-input-tag>
         </div>
+        <el-input v-if="form.manyType !== 'divide' && showReplyTo" v-model="form.replyTo" ref="replyToInputRef"
+                  :placeholder="$t('replyToPlaceholder')" size="large" @focus="hideEmptyCcBcc" style="padding-bottom: 4px" />
         <el-input v-model="form.subject" :placeholder="t('subject')" size="large"  @focus="hideEmptyCcBcc" style="padding-bottom: 4px" />
         <tinyEditor :def-value="defValue" ref="editor" @change="change" @focus="focusChange" />
         <div class="button-item">
@@ -120,6 +123,9 @@
               <Icon style="cursor: pointer;" icon="material-symbols-light:close-rounded" @click="delAtt(index)"
                     width="22" height="22"/>
             </div>
+          </div>
+          <div class="schedule-btn" @click="openSchedule" :title="t('scheduleSend')">
+            <Icon icon="material-symbols-light:schedule-outline-rounded" width="24" height="24"/>
           </div>
           <div>
             <el-dropdown split-button type="primary" trigger="click" @click="sendEmail" @command="selectSendMode">
@@ -139,6 +145,24 @@
         </div>
       </div>
     </div>
+    <el-dialog top="10vh" v-model="showSchedule" :title="t('scheduleSend')" width="520">
+      <div class="schedule-form">
+        <el-date-picker v-model="scheduleTime" type="datetime" :placeholder="t('scheduleTime')"
+                        format="YYYY-MM-DD HH:mm" value-format="YYYY-MM-DD HH:mm:ss"
+                        :disabled-date="scheduleDisabledDate" style="width: 100%"/>
+        <el-button type="primary" :loading="scheduleLoading" @click="submitSchedule">{{ t('scheduleSend') }}</el-button>
+      </div>
+      <div class="provider-tip">{{ t('scheduleDesc') }}</div>
+      <el-table v-if="scheduleList.length > 0" :data="scheduleList" max-height="260" style="margin-top: 12px">
+        <el-table-column property="sendTime" :label="t('scheduleTime')" min-width="140"/>
+        <el-table-column property="subject" :label="t('subject')" min-width="140" show-overflow-tooltip/>
+        <el-table-column width="80" fixed="right">
+          <template #default="props">
+            <el-button link type="danger" @click="cancelSchedule(props.row.scheduleId)">{{ t('cancel') }}</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
     <el-dialog top="10vh" v-model="showContacts" @closed="clearSelectContact" :title="t('recentContacts')">
       <el-table class="contacts-table" ref="contactsTabRef" row-key="email" :data="contacts" style="height: 445px" @row-click="toggleContactRow">
         <el-table-column type="selection" width="32" />
@@ -168,6 +192,8 @@ import {h, nextTick, onMounted, onUnmounted, reactive, ref, toRaw, computed} fro
 import {Icon} from "@iconify/vue";
 import {useUserStore} from "@/store/user.js";
 import {emailSend} from "@/request/email.js";
+import {emailSchedule, emailScheduleList, emailScheduleCancel} from "@/request/schedule.js";
+import {draftSave} from "@/request/draft.js";
 import {isEmail} from "@/utils/verify-utils.js";
 import {useAccountStore} from "@/store/account.js";
 import {useEmailStore} from "@/store/email.js";
@@ -210,8 +236,14 @@ const showContacts = ref(false)
 const contactTarget = ref('receive')
 const showCc = ref(false)
 const showBcc = ref(false)
+const showReplyTo = ref(false)
 const ccInputRef = ref()
 const bccInputRef = ref()
+const replyToInputRef = ref()
+const showSchedule = ref(false)
+const scheduleTime = ref('')
+const scheduleLoading = ref(false)
+const scheduleList = ref([])
 const mySelect = ref()
 const ccSelectRef = ref()
 const bccSelectRef = ref()
@@ -237,6 +269,8 @@ const form = reactive({
   emailId: 0,
   attachments: [],
   draftId: null,
+  serverId: null,
+  replyTo: '',
 })
 
 const selectRecipientList = ref([])
@@ -404,12 +438,74 @@ function openBcc() {
   nextTick(() => bccInputRef.value?.focus?.())
 }
 
+function openReplyTo() {
+  showReplyTo.value = true
+  nextTick(() => replyToInputRef.value?.focus?.())
+}
+
+function scheduleDisabledDate(date) {
+  return date.getTime() < Date.now() - 24 * 60 * 60 * 1000
+}
+
+function openSchedule() {
+  showSchedule.value = true
+  loadScheduleList()
+}
+
+function loadScheduleList() {
+  emailScheduleList().then(list => {
+    scheduleList.value = list || []
+  }).catch(() => {})
+}
+
+function cancelSchedule(scheduleId) {
+  emailScheduleCancel(scheduleId).then(() => {
+    loadScheduleList()
+  })
+}
+
+async function submitSchedule() {
+  if (scheduleLoading.value) return
+  if (!scheduleTime.value) {
+    ElMessage({message: t('scheduleTimeRequired'), type: 'error', plain: true})
+    return
+  }
+  if (form.attachments.length > 0) {
+    ElMessage({message: t('scheduleNoAttachment'), type: 'error', plain: true})
+    return
+  }
+
+  form.content = editor.value.getContent()
+  scheduleLoading.value = true
+  try {
+    const payload = {...toRaw(form), sendTime: scheduleTime.value}
+    delete payload.attachments
+    delete payload.serverId
+    await emailSchedule(payload)
+    ElNotification({
+      title: t('scheduleSend'),
+      type: 'success',
+      message: h('span', {style: 'color: teal'}, scheduleTime.value),
+      position: 'bottom-right'
+    })
+    scheduleTime.value = ''
+    loadScheduleList()
+  } catch (e) {
+    ElNotification({title: t('sendFailMsg'), type: 'error', message: e.message, position: 'bottom-right'})
+  } finally {
+    scheduleLoading.value = false
+  }
+}
+
 function hideEmptyCcBcc() {
   if (showCc.value && form.ccEmail.length === 0) {
     showCc.value = false
   }
   if (showBcc.value && form.bccEmail.length === 0) {
     showBcc.value = false
+  }
+  if (showReplyTo.value && !form.replyTo) {
+    showReplyTo.value = false
   }
 }
 
@@ -738,6 +834,9 @@ function openDraft(draft) {
   Object.assign(form, {...draft, manyType: draft.manyType || 'together'})
   form.ccEmail = draft.ccEmail || []
   form.bccEmail = draft.bccEmail || []
+  form.replyTo = draft.replyTo || ''
+  form.serverId = draft.serverId || null
+  showReplyTo.value = !!form.replyTo
   if (form.manyType === 'divide') {
     clearCcBcc()
   }
@@ -763,6 +862,26 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyDown);
 });
 
+// 草稿同步到服务端（附件仍留在本地），换设备也能看到
+function syncDraftToServer(data) {
+  const payload = {...toRaw(data)}
+  delete payload.attachments
+
+  const localDraftId = payload.draftId
+  const serverId = payload.serverId
+  delete payload.draftId
+  delete payload.serverId
+  if (serverId) {
+    payload.draftId = serverId
+  }
+
+  draftSave(payload).then(id => {
+    if (id && !serverId && localDraftId && typeof localDraftId === 'number') {
+      db.value.draft.update(localDraftId, {serverId: id})
+    }
+  }).catch(e => console.warn('sync draft to server failed:', e?.message))
+}
+
 function close() {
 
   closeOpenSuggest();
@@ -773,6 +892,7 @@ function close() {
 
   if (form.draftId) {
     draftStore.setDraft = {...toRaw(form)}
+    syncDraftToServer(form)
     show.value = false
     resetForm()
     return;
@@ -810,6 +930,7 @@ function close() {
     formData.createTime = dayjs().utc().format('YYYY-MM-DD HH:mm:ss');
     const draftId = await db.value.draft.add({...formData})
     db.value.att.add({draftId, attachments: toRaw(form.attachments)})
+    syncDraftToServer({...formData, draftId})
     draftStore.refreshList++
     show.value = false
     await nextTick(() => {
@@ -826,6 +947,19 @@ function close() {
 
 </script>
 <style>
+.schedule-btn {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.schedule-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 .write-select .el-select-dropdown__list {
   padding: 4px 4px !important;
 }

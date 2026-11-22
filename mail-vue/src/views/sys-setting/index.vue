@@ -198,6 +198,34 @@
                   </el-button>
                 </div>
               </div>
+              <div class="setting-item">
+                <div>
+                  <span>{{ $t('domainQuota') }}</span>
+                  <el-tooltip effect="dark" :content="$t('domainQuotaDesc')">
+                    <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+                  </el-tooltip>
+                </div>
+                <div>
+                  <el-button class="opt-button" style="margin-top: 0" @click="openDomainQuota" size="small"
+                             type="primary">
+                    <Icon icon="fluent:settings-48-regular" width="16" height="16"/>
+                  </el-button>
+                </div>
+              </div>
+              <div class="setting-item">
+                <div>
+                  <span>{{ $t('suppressionList') }}</span>
+                  <el-tooltip effect="dark" :content="$t('suppressionDesc')">
+                    <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+                  </el-tooltip>
+                </div>
+                <div>
+                  <el-button class="opt-button" style="margin-top: 0" @click="openSuppression" size="small"
+                             type="primary">
+                    <Icon icon="ic:round-list" width="18" height="18"/>
+                  </el-button>
+                </div>
+              </div>
               <div class="setting-item" v-if="!setting.hasCfEmail">
                 <div>
                   <span>{{ $t('sendWebhookSecret') }}</span>
@@ -555,6 +583,37 @@
           </template>
           <el-button type="primary" :loading="settingLoading" @click="saveProvider">{{ $t('save') }}</el-button>
         </form>
+      </el-dialog>
+      <el-dialog v-model="domainQuotaShow" :title="$t('domainQuota')" width="520">
+        <form @submit.prevent>
+          <div v-for="domain in quotaRowList" :key="domain" class="quota-row">
+            <span class="quota-domain">@{{ domain }}</span>
+            <span class="quota-used">{{ $t('domainQuotaUsed', {used: setting.domainQuotaUsage?.[domain] || 0}) }}</span>
+            <el-input-number v-model="domainQuotaForm[domain]" :min="0" :max="1000000" :step="50"
+                             controls-position="right" size="small"/>
+          </div>
+          <div class="provider-tip">{{ $t('domainQuotaDesc') }}</div>
+          <el-button type="primary" :loading="settingLoading" @click="saveDomainQuota">{{ $t('save') }}</el-button>
+        </form>
+      </el-dialog>
+      <el-dialog v-model="suppressionShow" :title="$t('suppressionList')" width="620"
+                 @closed="suppressionForm.email = ''">
+        <div class="suppression-add">
+          <el-input v-model="suppressionForm.email" :placeholder="$t('suppressionEmailPlaceholder')"
+                    @keyup.enter="addSuppression"/>
+          <el-button type="primary" :loading="suppressionLoading" @click="addSuppression">{{ $t('add') }}</el-button>
+        </div>
+        <div class="provider-tip">{{ $t('suppressionDesc') }}</div>
+        <el-table :data="suppressionRows" max-height="360" style="margin-top: 10px">
+          <el-table-column property="email" label="Email" min-width="180" show-overflow-tooltip/>
+          <el-table-column property="provider" :label="$t('sendProvider')" width="110"/>
+          <el-table-column property="reason" :label="$t('suppressionReason')" min-width="150" show-overflow-tooltip/>
+          <el-table-column width="70" fixed="right">
+            <template #default="props">
+              <el-button link type="danger" @click="removeSuppression(props.row.email)">{{ $t('delete') }}</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
       </el-dialog>
       <el-dialog v-model="webhookSecretShow" :title="$t('sendWebhookSecret')" width="480"
                  @closed="cleanWebhookSecretForm">
@@ -1002,6 +1061,7 @@ Authorization: &lt;secret&gt;</pre>
 <script setup>
 import {computed, defineOptions, nextTick, reactive, ref} from "vue";
 import {deleteBackground, setBackground, setBlackList, settingQuery, settingSet} from "@/request/setting.js";
+import {suppressionAdd, suppressionDelete, suppressionList} from "@/request/suppression.js";
 import {useSettingStore} from "@/store/setting.js";
 import {useUiStore} from "@/store/ui.js";
 import {useUserStore} from "@/store/user.js";
@@ -1034,6 +1094,12 @@ const userStore = useUserStore();
 const editTitleShow = ref(false)
 const providerFormShow = ref(false)
 const webhookSecretShow = ref(false)
+const domainQuotaShow = ref(false)
+const domainQuotaForm = reactive({})
+const suppressionShow = ref(false)
+const suppressionRows = ref([])
+const suppressionLoading = ref(false)
+const suppressionForm = reactive({email: ''})
 const blackFormShow = ref(false)
 const autoCleanShow = ref(false)
 const aiCodeFilterShow = ref(false)
@@ -1777,6 +1843,53 @@ function openCut() {
   }
 }
 
+const quotaRowList = computed(() =>
+  (settingStore.domainList || []).map(item => String(item).replace(/^@/, ''))
+)
+
+function openDomainQuota() {
+  quotaRowList.value.forEach(domain => {
+    if (domainQuotaForm[domain] === undefined) {
+      domainQuotaForm[domain] = Number(setting.value.domainDailyQuota?.[domain]) || 0
+    }
+  })
+  domainQuotaShow.value = true
+}
+
+function saveDomainQuota() {
+  const payload = {}
+  quotaRowList.value.forEach(domain => {
+    payload[domain] = Number(domainQuotaForm[domain]) || 0
+  })
+  editSetting({domainDailyQuota: payload})
+}
+
+function openSuppression() {
+  suppressionShow.value = true
+  loadSuppression()
+}
+
+function loadSuppression() {
+  suppressionList().then(list => {
+    suppressionRows.value = list || []
+  }).catch(() => {})
+}
+
+function addSuppression() {
+  if (!suppressionForm.email) return
+  suppressionLoading.value = true
+  suppressionAdd(suppressionForm.email).then(() => {
+    suppressionForm.email = ''
+    loadSuppression()
+  }).finally(() => {
+    suppressionLoading.value = false
+  })
+}
+
+function removeSuppression(email) {
+  suppressionDelete(email).then(() => loadSuppression())
+}
+
 function openWebhookSecret() {
   webhookSecretShow.value = true
 }
@@ -1929,6 +2042,7 @@ function editSetting(settingForm, refreshStatus = true) {
     editTitleShow.value = false
     providerFormShow.value = false
     webhookSecretShow.value = false
+    domainQuotaShow.value = false
     turnstileShow.value = false
     tgSettingShow.value = false
     thirdEmailShow.value = false
@@ -2447,6 +2561,31 @@ function editSetting(settingForm, refreshStatus = true) {
   font-size: 12px;
   opacity: 0.6;
   margin: 6px 0 0;
+}
+
+.quota-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+
+  .quota-domain {
+    width: 170px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .quota-used {
+    flex: 1;
+    font-size: 12px;
+    opacity: 0.6;
+  }
+}
+
+.suppression-add {
+  display: flex;
+  gap: 10px;
 }
 
 .token-item {

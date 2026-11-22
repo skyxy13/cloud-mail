@@ -20,4 +20,7 @@ import '../api/reg-key-api'
 import '../api/public-api'
 import '../api/telegram-api'
 import '../api/oauth-api'
+import '../api/draft-api'
+import '../api/schedule-api'
+import '../api/suppression-api'
 export default app;

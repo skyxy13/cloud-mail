@@ -33,6 +33,8 @@ export const setting = sqliteTable('setting', {
 	sendWebhookSecrets: text('send_webhook_secrets').default("{}").notNull(),
 	// 1 表示回调必须带签名密钥，未配置密钥时直接拒绝
 	sendWebhookStrict: integer('send_webhook_strict').default(0).notNull(),
+	// 域名每日发件配额：{"example.com":200}，0 或不配置表示不限
+	domainDailyQuota: text('domain_daily_quota').default("{}").notNull(),
 	noticeTitle: text('notice_title').default('').notNull(),
 	noticeContent: text('notice_content').default('').notNull(),
 	noticeType: text('notice_type').default('').notNull(),

@@ -41,8 +41,8 @@ describe('send webhook', () => {
 
 	it('maps mailtrap events', () => {
 		const base = {message_id: '<0c7fd939-02cf-11ed-88c2-0a58a9feac02@example.com>', email: 'a@test.com'};
-		expect(sendWebhookService.mapEvent('mailtrap', {...base, event: 'delivery'})).toEqual({
-			providerId: '<0c7fd939-02cf-11ed-88c2-0a58a9feac02@example.com>', status: 2, message: null
+		expect(sendWebhookService.mapEvent('mailtrap', {...base, event: 'delivery'})).toMatchObject({
+			providerId: '<0c7fd939-02cf-11ed-88c2-0a58a9feac02@example.com>', status: 2, message: null, suppress: false
 		});
 		const bounced = sendWebhookService.mapEvent('mailtrap', {...base, event: 'bounce', response_code: 550, response: 'mailbox unavailable'});
 		expect(bounced.status).toBe(3);
@@ -54,7 +54,7 @@ describe('send webhook', () => {
 
 	it('maps ahasend events', () => {
 		const data = {id: 'msg-1', recipient: 'a@test.com'};
-		expect(sendWebhookService.mapEvent('ahasend', {type: 'message.delivered', data})).toEqual({providerId: 'msg-1', status: 2, message: null});
+		expect(sendWebhookService.mapEvent('ahasend', {type: 'message.delivered', data})).toMatchObject({providerId: 'msg-1', status: 2, message: null});
 		const bounced = sendWebhookService.mapEvent('ahasend', {
 			type: 'message.bounced',
 			data: {...data, delivery_attempt: {classification: 'InvalidRecipient', smtp_code: 550}}
@@ -67,7 +67,7 @@ describe('send webhook', () => {
 	});
 
 	it('maps plunk events by type and by payload fields', () => {
-		expect(sendWebhookService.mapEvent('plunk', {type: 'email.delivery', emailId: 'plunk-1'})).toEqual({
+		expect(sendWebhookService.mapEvent('plunk', {type: 'email.delivery', emailId: 'plunk-1'})).toMatchObject({
 			providerId: 'plunk-1', status: 2, message: null
 		});
 		// 默认载荷没有事件名，用字段判断
