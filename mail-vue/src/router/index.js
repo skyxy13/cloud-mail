@@ -113,7 +113,12 @@ router.beforeEach((to, from, next) => {
         return
     }
 
+    // 已登录时的第三方绑定回调（/login?code=... 且带绑定标记）必须放行，
+    // 否则会被弹回原页面，授权码丢失。
     if (token && to.path.startsWith('/login')) {
+        if (to.query.code && sessionStorage.getItem('oauthBindMode') === '1') {
+            return next()
+        }
         return next(from.path)
     }
 

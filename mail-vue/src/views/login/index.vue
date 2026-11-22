@@ -115,7 +115,12 @@
         </template>
       </div>
     </div>
-    <el-dialog class="bind-dialog" v-model="showBindForm" :title="$t('bindMailboxTitle')" >
+    <el-dialog class="bind-dialog" v-model="showBindForm" :title="$t('bindMailboxTitle')" :close-on-click-modal="false">
+      <el-radio-group v-model="bindMode" class="bind-mode" :aria-label="$t('bindMailboxTitle')">
+        <el-radio-button value="existing">{{ $t('bindExistingTab') }}</el-radio-button>
+        <el-radio-button value="register" :disabled="settingStore.settings.register === 1">{{ $t('bindRegisterTab') }}</el-radio-button>
+      </el-radio-group>
+
       <div class="bind-container">
         <el-input :class="!hideLoginDomain ? 'email-input' : ''" v-model="bindForm.email" type="text" :placeholder="$t('emailAccount')" autocomplete="off" @keyup.enter="bind">
           <template #append v-if="!hideLoginDomain">
@@ -140,19 +145,33 @@
             </div>
           </template>
         </el-input>
-        <el-input v-model="bindForm.password" :placeholder="$t('bindPwdPlaceholder')" type="password"
-                  autocomplete="off" @keyup.enter="bind"/>
-        <div class="bind-tip">{{ $t('bindMailboxTip') }}</div>
-        <el-input v-if="settingStore.settings.regKey === 0" v-model="bindForm.code" :placeholder="$t('regKey')"
-                  type="text" autocomplete="off" @keyup.enter="bind"/>
-        <el-input v-if="settingStore.settings.regKey === 2" v-model="bindForm.code"
-                  :placeholder="$t('regKeyOptional')" type="text" autocomplete="off" @keyup.enter="bind"/>
+
+        <template v-if="bindMode === 'existing'">
+          <el-input v-model="bindForm.password" :placeholder="$t('bindPwdPlaceholder')" type="password"
+                    autocomplete="off" @keyup.enter="bind"/>
+        </template>
+
+        <template v-else>
+          <el-input v-model="bindForm.password" :placeholder="$t('password')" type="password"
+                    autocomplete="off" @keyup.enter="bind"/>
+          <el-input v-model="bindForm.confirmPassword" :placeholder="$t('confirmPwd')" type="password"
+                    autocomplete="off" @keyup.enter="bind"/>
+          <el-input v-if="settingStore.settings.regKey === 0" v-model="bindForm.code" :placeholder="$t('regKey')"
+                    type="text" autocomplete="off" @keyup.enter="bind"/>
+          <el-input v-if="settingStore.settings.regKey === 2" v-model="bindForm.code"
+                    :placeholder="$t('regKeyOptional')" type="text" autocomplete="off" @keyup.enter="bind"/>
+          <div class="bind-tip">{{ registerRequirementTip }}</div>
+        </template>
+
+        <div v-if="bindMode === 'existing'" class="bind-tip">{{ $t('bindMailboxTip') }}</div>
+
         <div v-if="verifyShow" class="auth-turnstile">
           <div ref="bindTurnstileContainer" :key="turnstileContainerKey"></div>
           <span class="turnstile-error" v-if="botJsError">{{ $t('verifyModuleFailed', {action: $t('bindMailboxBtn')}) }}</span>
         </div>
+
         <el-button class="btn" type="primary" @click="bind" :loading="bindLoading"
-        >{{ $t('bindMailboxBtn') }}
+        >{{ bindMode === 'existing' ? $t('bindMailboxBtn') : $t('regBindBtn') }}
         </el-button>
       </div>
     </el-dialog>
@@ -179,7 +198,7 @@ import {cvtR2Url} from "@/utils/convert.js";
 import {loginUserInfo} from "@/request/my.js";
 import {permsToRouter} from "@/perm/perm.js";
 import {useI18n} from "vue-i18n";
-import {oauthBindUser, oauthLinuxDoLogin, oauthGithubLogin, oauthGoogleLogin} from "@/request/ouath.js";
+import {oauthBindUser, oauthLinuxDoLogin, oauthGithubLogin, oauthGoogleLogin, oauthMyBind} from "@/request/ouath.js";
 import {reloadTurnstileScript} from "@/utils/turnstile-script.js";
 import loading from "@/components/loading/index.vue";
 
@@ -213,11 +232,24 @@ const oauthProviders = computed(() => {
   return allProviders.filter(p => settingStore.settings[p.key + 'Switch'] === 0)
 })
 
+const bindMode = ref('existing')
+
 const bindForm = reactive({
   email: '',
   password: '',
+  confirmPassword: '',
   oauthUserId: '',
   code: ''
+})
+
+// 注册模式下按站点当前设置算出「还需要满足哪些要求」，让用户一眼看清
+const registerRequirementTip = computed(() => {
+  const s = settingStore.settings
+  const required = []
+  if (s.regKey === 0) required.push(t('reqRegKey'))
+  if (s.registerVerify === 0 || (s.registerVerify === 2 && s.regVerifyOpen)) required.push(t('reqTurnstile'))
+  if (s.register === 1) required.push(t('reqRegisterClosed'))
+  return required.length ? t('reqPrefix') + required.join(t('reqSep')) : t('reqNone')
 })
 
 const form = reactive({
@@ -258,7 +290,7 @@ function clearTurnstile() {
   verifyToken = ''
 }
 
-watch([show, showBindForm], clearTurnstile)
+watch([show, showBindForm, bindMode], clearTurnstile)
 onBeforeUnmount(clearTurnstile)
 
 function renderTurnstile(api, container) {
@@ -379,6 +411,31 @@ async function oauthGetUser() {
   if (!code || !oauthProvider.value) return
 
   const provider = oauthProvider.value
+
+  // 个人设置里点击「绑定」时置位，回调后直接把 OAuth 身份挂到当前账号
+  if (sessionStorage.getItem('oauthBindMode') === '1') {
+    sessionStorage.removeItem('oauthBindMode')
+    sessionStorage.removeItem('oauthProvider')
+    oauthLoading.value = true
+    window.history.replaceState({}, '', window.location.origin + window.location.pathname)
+
+    loginFns[provider](code, window.location.origin + '/login', true).then(data => {
+      return oauthMyBind(data.userInfo.oauthId)
+    }).then(() => {
+      ElMessage({
+        message: t('oauthBindSuccess'),
+        type: 'success',
+        plain: true,
+      })
+      oauthLoading.value = false
+      router.replace({name: 'setting'})
+    }).catch(() => {
+      oauthLoading.value = false
+      router.replace({name: 'setting'})
+    })
+    return
+  }
+
   oauthLoading.value = true
   sessionStorage.removeItem('oauthProvider')
   window.history.replaceState({}, '', window.location.origin + window.location.pathname)
@@ -388,6 +445,7 @@ async function oauthGetUser() {
     bindForm.oauthUserId = data.userInfo.oauthUserId;
 
     if (!data.token) {
+      bindMode.value = 'existing'
       showBindForm.value = true
       oauthLoading.value = false
       ElMessage({
@@ -444,39 +502,105 @@ function bind() {
     return
   }
 
-  // 注册码只对「新建邮箱」必需；填了密码说明是绑定已有账号，交给服务端校验
-  if (settingStore.settings.regKey === 0 && !bindForm.password && !bindForm.code) {
+  // ---------- 绑定已有邮箱：校验该邮箱密码 ----------
+  if (bindMode.value === 'existing') {
 
+    if (!bindForm.password) {
+      ElMessage({
+        message: t('emptyPwdMsg'),
+        type: 'error',
+        plain: true,
+      })
+      return
+    }
+
+    const {loginVerify, loginVerifyOpen} = settingStore.settings
+
+    // 已有邮箱走密码校验，站点要求人机验证时先出验证码
+    if (loginVerify === 0 && needsTurnstile(loginVerify, loginVerifyOpen)) return
+
+    const form = {
+      email,
+      oauthUserId: bindForm.oauthUserId,
+      mode: 'existing',
+      password: bindForm.password,
+      token: verifyToken
+    }
+
+    bindLoading.value = true
+    oauthBindUser(form).then(data => {
+      saveToken(data.token)
+    }).catch(res => {
+      bindLoading.value = false
+      if (res && res.code === 400) {
+        settingStore.settings.loginVerifyOpen = true
+        showTurnstile()
+      }
+    })
+    return
+  }
+
+  // ---------- 注册新邮箱 ----------
+  if (!bindForm.password) {
     ElMessage({
-      message: t('emptyRegKeyMsg'),
+      message: t('emptyPwdMsg'),
       type: 'error',
       plain: true,
     })
     return
+  }
+
+  if (bindForm.password.length < 6) {
+    ElMessage({
+      message: t('pwdLengthMsg'),
+      type: 'error',
+      plain: true,
+    })
+    return
+  }
+
+  if (bindForm.password !== bindForm.confirmPassword) {
+    ElMessage({
+      message: t('confirmPwdFailMsg'),
+      type: 'error',
+      plain: true,
+    })
+    return
+  }
+
+  if (settingStore.settings.regKey === 0) {
+
+    if (!bindForm.code) {
+      ElMessage({
+        message: t('emptyRegKeyMsg'),
+        type: 'error',
+        plain: true,
+      })
+      return
+    }
 
   }
 
-  const {loginVerify, loginVerifyOpen} = settingStore.settings
-
-  // 已有邮箱走密码校验，站点要求人机验证时先出验证码
-  if (loginVerify === 0 && needsTurnstile(loginVerify, loginVerifyOpen)) return
+  const {registerVerify, regVerifyOpen} = settingStore.settings
+  if (needsTurnstile(registerVerify, regVerifyOpen)) return
 
   const form = {
     email,
     oauthUserId: bindForm.oauthUserId,
-    code: bindForm.code,
+    mode: 'register',
     password: bindForm.password,
+    code: bindForm.code,
     token: verifyToken
   }
 
   bindLoading.value = true
   oauthBindUser(form).then(data => {
+    settingStore.settings.regVerifyOpen = !!data.regVerifyOpen
     saveToken(data.token)
   }).catch(res => {
     bindLoading.value = false
-    // 400 = 需要人机验证（或验证失败），把 turnstile 显示出来再试
     if (res && res.code === 400) {
-      settingStore.settings.loginVerifyOpen = true
+      settingStore.settings.regVerifyOpen = true
       showTurnstile()
     }
   })
@@ -785,6 +909,20 @@ function submitRegister() {
     margin-right: 20px !important;
     margin-left: 20px !important;
   }
+}
+
+.bind-mode {
+  display: flex;
+  width: 100%;
+  margin-bottom: 15px;
+}
+
+.bind-mode :deep(.el-radio-button) {
+  flex: 1;
+}
+
+.bind-mode :deep(.el-radio-button__inner) {
+  width: 100%;
 }
 
 .bind-container {

@@ -32,6 +32,30 @@
         </div>
       </div>
     </div>
+    <div class="oauth-bind" v-if="oauthProviders.length">
+      <div class="title">{{$t('oauthBindTitle')}}</div>
+      <div class="oauth-bind-desc">{{$t('oauthBindDesc')}}</div>
+      <div class="oauth-bind-list">
+        <div class="oauth-bind-row" v-for="p in oauthProviders" :key="p.key">
+          <div class="oauth-bind-name">
+            <el-avatar v-if="p.iconType === 'image'" :src="p.icon" :size="20"/>
+            <Icon v-else :icon="p.icon" width="20" height="20"/>
+            <span>{{ p.label }}</span>
+          </div>
+          <div class="oauth-bind-action">
+            <template v-if="boundMap[p.key]">
+              <span class="oauth-bind-account" :title="boundMap[p.key].username">
+                {{ boundMap[p.key].username || boundMap[p.key].name || $t('oauthBound') }}
+              </span>
+              <el-button size="small" @click="unbind(p.key)">{{$t('oauthUnbind')}}</el-button>
+            </template>
+            <el-button v-else size="small" type="primary" @click="startBind(p.key)">
+              {{$t('oauthBind')}}
+            </el-button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="language">
       <div class="title">{{$t('language')}}</div>
       <div class="language-row setting-row">
@@ -81,8 +105,10 @@
   </div>
 </template>
 <script setup>
-import {reactive, ref, defineOptions} from 'vue'
+import {computed, reactive, ref, defineOptions} from 'vue'
 import {resetPassword, userDelete} from "@/request/my.js";
+import {oauthMyList, oauthMyBind, oauthMyUnbind} from "@/request/ouath.js";
+import {Icon} from "@iconify/vue";
 import {useUserStore} from "@/store/user.js";
 import router from "@/router/index.js";
 import {accountSetName} from "@/request/account.js";
@@ -105,6 +131,78 @@ const langSelect = ref(settingStore.lang)
 defineOptions({
   name: 'setting'
 })
+
+const allOauthProviders = [
+  {key: 'google', label: 'Google', icon: 'devicon:google', iconType: 'iconify'},
+  {key: 'github', label: 'GitHub', icon: 'codicon:github-inverted', iconType: 'iconify'},
+  {key: 'linuxdo', label: 'LinuxDo', icon: '/image/linuxdo.webp', iconType: 'image'},
+]
+
+const oauthList = ref([])
+
+const boundMap = computed(() => {
+  const map = {}
+  oauthList.value.forEach(row => {
+    if (row.platform) map[row.platform] = row
+  })
+  return map
+})
+
+// 站点启用的平台 + 当前账号已绑定的平台（即使该平台开关已关，也要能解绑）
+const oauthProviders = computed(() => allOauthProviders.filter(p =>
+  settingStore.settings[p.key + 'Switch'] === 0 || boundMap.value[p.key]
+))
+
+function loadOauth() {
+  oauthMyList().then(list => {
+    oauthList.value = list || []
+  }).catch(() => {
+    oauthList.value = []
+  })
+}
+
+loadOauth()
+
+// 绑定入口：跳到第三方授权页，回调仍落在 /login，由登录页识别 bind 标记后写回本账号
+function startBind(provider) {
+  const clientId = settingStore.settings[provider + 'ClientId']
+  if (!clientId) {
+    ElMessage({
+      message: t('oauthNotConfigured'),
+      type: 'error',
+      plain: true,
+    })
+    return
+  }
+  const redirectUri = encodeURIComponent(window.location.origin + '/login')
+  sessionStorage.setItem('oauthProvider', provider)
+  sessionStorage.setItem('oauthBindMode', '1')
+  const authorizeUrls = {
+    linuxdo: `https://connect.linux.do/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=openid+profile+email&state=${provider}`,
+    github: `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=user:email&state=${provider}`,
+    google: `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=openid+profile+email&state=${provider}`,
+  }
+  window.location.href = authorizeUrls[provider]
+}
+
+function unbind(provider) {
+  const row = boundMap.value[provider]
+  if (!row) return
+  ElMessageBox.confirm(t('oauthUnbindConfirm'), {
+    confirmButtonText: t('confirm'),
+    cancelButtonText: t('cancel'),
+    type: 'warning'
+  }).then(() => {
+    oauthMyUnbind(row.oauthId).then(() => {
+      ElMessage({
+        message: t('oauthUnbindSuccess'),
+        type: 'success',
+        plain: true,
+      })
+      loadOauth()
+    })
+  }).catch(() => {})
+}
 
 function showSetName() {
   accountName.value = userStore.user.name
@@ -341,6 +439,54 @@ function submitPwd() {
     display: flex;
     flex-direction: column;
     gap: 20px;
+  }
+
+  .oauth-bind {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-bottom: 40px;
+    font-size: 14px;
+  }
+
+  .oauth-bind-desc {
+    color: var(--regular-text-color);
+    line-height: 1.6;
+  }
+
+  .oauth-bind-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .oauth-bind-row {
+    display: grid;
+    grid-template-columns: minmax(0, auto) max-content;
+    justify-content: start;
+    align-items: center;
+    column-gap: 40px;
+  }
+
+  .oauth-bind-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: bold;
+  }
+
+  .oauth-bind-action {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .oauth-bind-account {
+    max-width: 180px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--regular-text-color);
   }
 }
 </style>
