@@ -12,12 +12,35 @@ import userContext from '../security/user-context';
 import domainUtils from '../utils/domain-uitls';
 import sendProviderService from './send-provider-service';
 
+// webhook 校验密钥按服务商配置，留空表示不校验
+const webhookSecretProviders = sendProviderService.sendProviderList.map(item => item.id);
+
+function normalizeWebhookSecrets(value) {
+	let source = {};
+	if (typeof value === 'string') {
+		try {
+			source = JSON.parse(value) || {};
+		} catch (e) {
+			source = {};
+		}
+	} else if (value && typeof value === 'object') {
+		source = value;
+	}
+
+	const secrets = {};
+	webhookSecretProviders.forEach(provider => {
+		secrets[provider] = typeof source[provider] === 'string' ? source[provider] : '';
+	});
+	return secrets;
+}
+
 const settingService = {
 
 	async refresh(c) {
 		const settingRow = await orm(c).select().from(setting).get();
 		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
 		settingRow.sendProviders = sendProviderService.parseProviders(settingRow.sendProviders, settingRow.resendTokens);
+		settingRow.sendWebhookSecrets = normalizeWebhookSecrets(settingRow.sendWebhookSecrets);
 		settingRow.r2Domain = '';
 		c.set('setting', settingRow);
 		await c.env.kv.put(KvConst.SETTING, JSON.stringify(settingRow));
@@ -67,6 +90,7 @@ const settingService = {
 
 		// KV 缓存可能还是升级前的数据，这里统一补齐发件服务配置
 		setting.sendProviders = sendProviderService.parseProviders(setting.sendProviders, setting.resendTokens);
+		setting.sendWebhookSecrets = normalizeWebhookSecrets(setting.sendWebhookSecrets);
 
 		setting.emailPrefixFilter = setting.emailPrefixFilter.split(",").filter(Boolean);
 		setting.autoRefresh = Number(setting.autoRefresh) === 1 ? 1 : 2; // 1 关闭，2 开启
@@ -91,6 +115,13 @@ const settingService = {
 		});
 
 		settingRow.sendProviders = sendProviderService.maskProviders(settingRow.sendProviders);
+
+		const webhookSecrets = {};
+		Object.keys(settingRow.sendWebhookSecrets).forEach(provider => {
+			const secret = settingRow.sendWebhookSecrets[provider];
+			webhookSecrets[provider] = secret ? `${secret.slice(0, 6)}******` : '';
+		});
+		settingRow.sendWebhookSecrets = webhookSecrets;
 
 		settingRow.s3AccessKey = settingRow.s3AccessKey ? `${settingRow.s3AccessKey.slice(0, 12)}******` : null;
 		settingRow.s3SecretKey = settingRow.s3SecretKey ? `${settingRow.s3SecretKey.slice(0, 12)}******` : null;
@@ -158,8 +189,20 @@ const settingService = {
 			params.webhookUrl = domainUtils.toOssDomain(params.webhookUrl) || '';
 		}
 
+		// webhook 校验密钥：留空或回传脱敏值都表示不修改
+		const mergedWebhookSecrets = { ...settingData.sendWebhookSecrets };
+		const incomingWebhookSecrets = params.sendWebhookSecrets && typeof params.sendWebhookSecrets === 'object'
+			? params.sendWebhookSecrets : {};
+		Object.keys(incomingWebhookSecrets).forEach(provider => {
+			const value = incomingWebhookSecrets[provider];
+			if (!webhookSecretProviders.includes(provider) || typeof value !== 'string') return;
+			if (value.includes('******')) return;
+			mergedWebhookSecrets[provider] = value.trim();
+		});
+
 		params.resendTokens = JSON.stringify(legacyResendTokens);
 		params.sendProviders = JSON.stringify(sendProviders);
+		params.sendWebhookSecrets = JSON.stringify(mergedWebhookSecrets);
 
 		if (params.autoRefresh !== undefined) {
 			params.autoRefresh = Number(params.autoRefresh) === 1 ? 1 : 2;

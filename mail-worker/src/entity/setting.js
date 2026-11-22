@@ -29,6 +29,8 @@ export const setting = sqliteTable('setting', {
 	resendTokens: text('resend_tokens').default("{}").notNull(),
 	// 通用发件服务配置：{"example.com":{"provider":"resend","token":"re_xxx","accountId":""}}
 	sendProviders: text('send_providers').default("{}").notNull(),
+	// 各发件服务商的 webhook 校验密钥：{"resend":"whsec_xxx","mailtrap":"...","ahasend":"whsec_xxx","plunk":"..."}
+	sendWebhookSecrets: text('send_webhook_secrets').default("{}").notNull(),
 	noticeTitle: text('notice_title').default('').notNull(),
 	noticeContent: text('notice_content').default('').notNull(),
 	noticeType: text('notice_type').default('').notNull(),

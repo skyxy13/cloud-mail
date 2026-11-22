@@ -25,9 +25,18 @@ const dbInit = {
 		await this.v3_5DB(c);
 		await this.v3_6DB(c);
 		await this.v3_7DB(c);
+		await this.v3_8DB(c);
 		await userService.initAdmin(c);
 		await settingService.refresh(c);
 		return c.text('success');
+	},
+
+	async v3_8DB(c) {
+		try {
+			await c.env.db.prepare(`ALTER TABLE setting ADD COLUMN send_webhook_secrets TEXT NOT NULL DEFAULT '{}'`).run();
+		} catch (e) {
+			console.warn(`sql skip:${e.message}`);
+		}
 	},
 
 	async v3_7DB(c) {
@@ -390,6 +399,7 @@ const dbInit = {
 						add_email_verify INTEGER NOT NULL DEFAULT 1,
 						resend_tokens TEXT NOT NULL DEFAULT '{}',
 						send_providers TEXT NOT NULL DEFAULT '{}',
+						send_webhook_secrets TEXT NOT NULL DEFAULT '{}',
 						send INTEGER NOT NULL DEFAULT 0,
 						r2_domain TEXT,
 						site_key TEXT,

@@ -10,6 +10,6 @@ export default defineWorkersConfig({
 				wrangler: { configPath: './wrangler-vitest.toml' }
 			}
 		},
-		include: ['test/send-provider.spec.js', 'test/setting-provider.worker.spec.js']
+		include: ['test/send-provider.spec.js', 'test/send-webhook.spec.js', 'test/setting-provider.worker.spec.js']
 	}
 });

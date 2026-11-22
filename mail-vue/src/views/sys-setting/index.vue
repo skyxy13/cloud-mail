@@ -198,6 +198,20 @@
                   </el-button>
                 </div>
               </div>
+              <div class="setting-item" v-if="!setting.hasCfEmail">
+                <div>
+                  <span>{{ $t('sendWebhookSecret') }}</span>
+                  <el-tooltip effect="dark" :content="$t('sendWebhookSecretDesc')">
+                    <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+                  </el-tooltip>
+                </div>
+                <div>
+                  <el-button class="opt-button" style="margin-top: 0" @click="openWebhookSecret" size="small"
+                             type="primary">
+                    <Icon icon="fluent:settings-48-regular" width="16" height="16"/>
+                  </el-button>
+                </div>
+              </div>
               <div class="setting-item">
                 <div><span>{{ $t('blackList') }}</span></div>
                 <div>
@@ -524,6 +538,20 @@
                     @keyup.enter="saveProvider"/>
           <div class="provider-tip">{{ $t('addSendProviderDesc') }}</div>
           <el-button type="primary" :loading="settingLoading" @click="saveProvider">{{ $t('save') }}</el-button>
+        </form>
+      </el-dialog>
+      <el-dialog v-model="webhookSecretShow" :title="$t('sendWebhookSecret')" width="480"
+                 @closed="cleanWebhookSecretForm">
+        <form @submit.prevent>
+          <el-input v-for="item in providerOptions" :key="item.id" style="margin-bottom: 12px"
+                    type="password" show-password
+                    v-model="webhookSecretForm[item.id]"
+                    :placeholder="webhookSecretPlaceholderFor(item)"/>
+          <div class="provider-tip">{{ $t('sendWebhookSecretDesc') }}</div>
+          <el-button type="primary" :loading="settingLoading" @click="saveWebhookSecret">{{ $t('save') }}</el-button>
+          <el-button style="margin-top: 10px" :loading="settingLoading" @click="clearWebhookSecret">
+            {{ $t('clearAll') }}
+          </el-button>
         </form>
       </el-dialog>
       <el-dialog v-model="turnstileShow" :title="$t('addTurnstileSecret')" width="340"
@@ -977,6 +1005,7 @@ const accountStore = useAccountStore();
 const userStore = useUserStore();
 const editTitleShow = ref(false)
 const providerFormShow = ref(false)
+const webhookSecretShow = ref(false)
 const blackFormShow = ref(false)
 const autoCleanShow = ref(false)
 const aiCodeFilterShow = ref(false)
@@ -1015,6 +1044,12 @@ const providerForm = reactive({
   provider: 'resend',
   token: '',
   accountId: '',
+})
+const webhookSecretForm = reactive({
+  resend: '',
+  mailtrap: '',
+  ahasend: '',
+  plunk: '',
 })
 const turnstileForm = reactive({
   siteKey: '',
@@ -1686,6 +1721,44 @@ function openCut() {
   }
 }
 
+function openWebhookSecret() {
+  webhookSecretShow.value = true
+}
+
+function webhookSecretPlaceholderFor(item) {
+  const masked = setting.value.sendWebhookSecrets?.[item.id]
+  return masked ? masked : t('webhookSecretPlaceholder', {provider: item.name})
+}
+
+function saveWebhookSecret() {
+  const settingForm = {sendWebhookSecrets: {}}
+  Object.keys(webhookSecretForm).forEach(provider => {
+    // 只提交填写过的密钥，留空表示保持原值
+    if (webhookSecretForm[provider]) {
+      settingForm.sendWebhookSecrets[provider] = webhookSecretForm[provider]
+    }
+  })
+  if (Object.keys(settingForm.sendWebhookSecrets).length === 0) {
+    webhookSecretShow.value = false
+    return
+  }
+  editSetting(settingForm)
+}
+
+function clearWebhookSecret() {
+  const settingForm = {sendWebhookSecrets: {}}
+  providerOptions.value.forEach(item => {
+    settingForm.sendWebhookSecrets[item.id] = ''
+  })
+  editSetting(settingForm)
+}
+
+function cleanWebhookSecretForm() {
+  providerOptions.value.forEach(item => {
+    webhookSecretForm[item.id] = ''
+  })
+}
+
 function openProviderForm() {
   if (!providerForm.domain) {
     providerForm.domain = setting.value.domainList[0]
@@ -1718,6 +1791,7 @@ function backupSetting() {
   const settingForm = {...setting.value}
   delete settingForm.resendTokens
   delete settingForm.sendProviders
+  delete settingForm.sendWebhookSecrets
   delete settingForm.siteKey
   delete settingForm.secretKey
   backup = JSON.stringify(setting.value)
@@ -1744,6 +1818,7 @@ function change(e) {
   delete settingForm.tgBotToken
   delete settingForm.resendTokens
   delete settingForm.sendProviders
+  delete settingForm.sendWebhookSecrets
   editSetting(settingForm, false)
 }
 
@@ -1783,6 +1858,7 @@ function editSetting(settingForm, refreshStatus = true) {
     }
     editTitleShow.value = false
     providerFormShow.value = false
+    webhookSecretShow.value = false
     turnstileShow.value = false
     tgSettingShow.value = false
     thirdEmailShow.value = false
