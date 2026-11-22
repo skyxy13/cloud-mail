@@ -115,7 +115,7 @@
         </template>
       </div>
     </div>
-    <el-dialog class="bind-dialog" v-model="showBindForm"  title="注册邮箱" >
+    <el-dialog class="bind-dialog" v-model="showBindForm" :title="$t('bindMailboxTitle')" >
       <div class="bind-container">
         <el-input :class="!hideLoginDomain ? 'email-input' : ''" v-model="bindForm.email" type="text" :placeholder="$t('emailAccount')" autocomplete="off" @keyup.enter="bind">
           <template #append v-if="!hideLoginDomain">
@@ -140,12 +140,19 @@
             </div>
           </template>
         </el-input>
+        <el-input v-model="bindForm.password" :placeholder="$t('bindPwdPlaceholder')" type="password"
+                  autocomplete="off" @keyup.enter="bind"/>
+        <div class="bind-tip">{{ $t('bindMailboxTip') }}</div>
         <el-input v-if="settingStore.settings.regKey === 0" v-model="bindForm.code" :placeholder="$t('regKey')"
                   type="text" autocomplete="off" @keyup.enter="bind"/>
         <el-input v-if="settingStore.settings.regKey === 2" v-model="bindForm.code"
                   :placeholder="$t('regKeyOptional')" type="text" autocomplete="off" @keyup.enter="bind"/>
+        <div v-if="verifyShow" class="auth-turnstile">
+          <div ref="bindTurnstileContainer" :key="turnstileContainerKey"></div>
+          <span class="turnstile-error" v-if="botJsError">{{ $t('verifyModuleFailed', {action: $t('bindMailboxBtn')}) }}</span>
+        </div>
         <el-button class="btn" type="primary" @click="bind" :loading="bindLoading"
-        >绑定
+        >{{ $t('bindMailboxBtn') }}
         </el-button>
       </div>
     </el-dialog>
@@ -208,6 +215,7 @@ const oauthProviders = computed(() => {
 
 const bindForm = reactive({
   email: '',
+  password: '',
   oauthUserId: '',
   code: ''
 })
@@ -235,7 +243,11 @@ const botJsError = ref(false)
 let turnstileLoading = false
 const loginTurnstileContainer = ref(null)
 const registerTurnstileContainer = ref(null)
-const turnstileContainer = computed(() => show.value === 'login' ? loginTurnstileContainer.value : registerTurnstileContainer.value)
+const bindTurnstileContainer = ref(null)
+const turnstileContainer = computed(() => {
+  if (showBindForm.value) return bindTurnstileContainer.value
+  return show.value === 'login' ? loginTurnstileContainer.value : registerTurnstileContainer.value
+})
 const turnstileContainerKey = ref(0)
 
 function clearTurnstile() {
@@ -246,7 +258,7 @@ function clearTurnstile() {
   verifyToken = ''
 }
 
-watch(show, clearTurnstile)
+watch([show, showBindForm], clearTurnstile)
 onBeforeUnmount(clearTurnstile)
 
 function renderTurnstile(api, container) {
@@ -379,10 +391,14 @@ async function oauthGetUser() {
       showBindForm.value = true
       oauthLoading.value = false
       ElMessage({
-        message: '请注册绑定一个邮箱',
+        message: t('oauthBindPrompt'),
         type: 'warning',
         duration: 4000,
         plain: true,
+      })
+      // 站点开启了登录人机验证时，提前把 turnstile 渲染到绑定弹窗里
+      nextTick(() => {
+        if (settingStore.settings.loginVerify === 0) showTurnstile()
       })
       return;
     }
@@ -428,27 +444,41 @@ function bind() {
     return
   }
 
-  if (settingStore.settings.regKey === 0) {
+  // 注册码只对「新建邮箱」必需；填了密码说明是绑定已有账号，交给服务端校验
+  if (settingStore.settings.regKey === 0 && !bindForm.password && !bindForm.code) {
 
-    if (!bindForm.code) {
-
-      ElMessage({
-        message: t('emptyRegKeyMsg'),
-        type: 'error',
-        plain: true,
-      })
-      return
-    }
+    ElMessage({
+      message: t('emptyRegKeyMsg'),
+      type: 'error',
+      plain: true,
+    })
+    return
 
   }
 
-  const form = {email, oauthUserId: bindForm.oauthUserId, code: bindForm.code}
+  const {loginVerify, loginVerifyOpen} = settingStore.settings
+
+  // 已有邮箱走密码校验，站点要求人机验证时先出验证码
+  if (loginVerify === 0 && needsTurnstile(loginVerify, loginVerifyOpen)) return
+
+  const form = {
+    email,
+    oauthUserId: bindForm.oauthUserId,
+    code: bindForm.code,
+    password: bindForm.password,
+    token: verifyToken
+  }
 
   bindLoading.value = true
   oauthBindUser(form).then(data => {
     saveToken(data.token)
-  }).catch(() => {
+  }).catch(res => {
     bindLoading.value = false
+    // 400 = 需要人机验证（或验证失败），把 turnstile 显示出来再试
+    if (res && res.code === 400) {
+      settingStore.settings.loginVerifyOpen = true
+      showTurnstile()
+    }
   })
 }
 
@@ -761,6 +791,12 @@ function submitRegister() {
   display: grid;
   grid-template-columns: 1fr;
   gap: 15px;
+}
+
+.bind-tip {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .setting-icon {

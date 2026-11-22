@@ -12,24 +12,51 @@ const oauthService = {
 
 	async bindUser(c, params) {
 
-		const { email, oauthUserId, code } = params;
+		const { email, oauthUserId, code, password, token } = params;
 
 		const oauthRow = await this.getById(c, oauthUserId);
+
+		if (!oauthRow) {
+			throw new BizError(t('oauthUserNotExist'));
+		}
 
 		let userRow = await userService.selectByIdIncludeDel(c, oauthRow.userId);
 
 		if (userRow) {
-			throw new BizError('用户已绑定有邮箱')
+			throw new BizError(t('oauthAlreadyBind'));
 		}
 
-		await loginService.register(c, { email, password: cryptoUtils.genRandomPwd(), code }, true);
+		const existUser = await userService.selectByEmailIncludeDel(c, email);
+
+		// 邮箱已存在：校验密码后绑定到原账号，不再新建用户
+		if (existUser) {
+
+			if (!password) {
+				throw new BizError(t('oauthBindNeedPwd'));
+			}
+
+			// 复用登录校验：密码、封禁/注销、人机验证（站点开启时）一并处理
+			const jwtToken = await loginService.login(c, { email, password, token });
+
+			await this.updateBindUser(c, oauthUserId, existUser.userId);
+
+			return { userInfo: oauthRow, token: jwtToken };
+		}
+
+		// 邮箱不存在：沿用注册流程（填了密码就用它，否则随机生成）
+		await loginService.register(c, { email, password: password || cryptoUtils.genRandomPwd(), code }, true);
 
 		userRow = await userService.selectByEmail(c, email);
 
-		orm(c).update(oauth).set({ userId: userRow.userId }).where(eq(oauth.oauthUserId, oauthUserId)).run();
+		await this.updateBindUser(c, oauthUserId, userRow.userId);
+
 		const jwtToken = await loginService.login(c, { email, password: null }, true);
 
-		return { userInfo: oauthRow, token: jwtToken}
+		return { userInfo: oauthRow, token: jwtToken }
+	},
+
+	async updateBindUser(c, oauthUserId, userId) {
+		await orm(c).update(oauth).set({ userId }).where(eq(oauth.oauthUserId, oauthUserId)).run();
 	},
 
 	async linuxDoLogin(c, params) {
