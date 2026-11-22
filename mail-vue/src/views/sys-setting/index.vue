@@ -178,16 +178,21 @@
                 </div>
               </div>
               <div class="setting-item">
-                <div><span>{{ setting.hasCfEmail ? $t('cloudflareEmailSending') : $t('resendToken') }}</span></div>
+                <div>
+                  <span>{{ setting.hasCfEmail ? $t('cloudflareEmailSending') : $t('sendProvider') }}</span>
+                  <el-tooltip v-if="!setting.hasCfEmail" effect="dark" :content="$t('sendProviderDesc')">
+                    <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+                  </el-tooltip>
+                </div>
                 <div v-if="setting.hasCfEmail">
                   <span>{{ $t('enabled') }}</span>
                 </div>
                 <div v-else>
-                  <el-button class="opt-button" style="margin-top: 0" @click="openResendList" size="small"
+                  <el-button class="opt-button" style="margin-top: 0" @click="openProviderList" size="small"
                              type="primary">
                     <Icon icon="ic:round-list" width="18" height="18"/>
                   </el-button>
-                  <el-button class="opt-button" style="margin-top: 0" @click="openResendForm" size="small"
+                  <el-button class="opt-button" style="margin-top: 0" @click="openProviderForm" size="small"
                              type="primary">
                     <Icon icon="material-symbols:add-rounded" width="16" height="16"/>
                   </el-button>
@@ -496,9 +501,9 @@
           <el-button type="primary" :loading="settingLoading" @click="saveTitle">{{ $t('save') }}</el-button>
         </form>
       </el-dialog>
-      <el-dialog v-model="resendTokenFormShow" :title="$t('resendToken')" width="340" @closed="cleanResendTokenForm">
+      <el-dialog v-model="providerFormShow" :title="$t('sendProvider')" width="420" @closed="cleanProviderForm">
         <form @submit.prevent>
-          <el-select style="margin-bottom: 15px" v-model="resendTokenForm.domain" placeholder="Select">
+          <el-select style="margin-bottom: 15px" v-model="providerForm.domain" :placeholder="$t('domain')">
             <el-option
                 v-for="item in settingStore.domainList"
                 :key="item"
@@ -506,8 +511,19 @@
                 :value="item"
             />
           </el-select>
-          <el-input type="text" :placeholder="$t('addResendTokenDesc')" v-model="resendTokenForm.token" @keyup.enter="saveResendToken"/>
-          <el-button type="primary" :loading="settingLoading" @click="saveResendToken">{{ $t('save') }}</el-button>
+          <el-select style="margin-bottom: 15px" v-model="providerForm.provider" :placeholder="$t('sendProvider')">
+            <el-option
+                v-for="item in providerOptions"
+                :key="item.id"
+                :label="item.name"
+                :value="item.id"/>
+          </el-select>
+          <el-input v-if="providerFormNeedAccountId" style="margin-bottom: 15px" type="text"
+                    :placeholder="$t('ahaSendAccountId')" v-model="providerForm.accountId"/>
+          <el-input type="text" :placeholder="providerTokenPlaceholder" v-model="providerForm.token"
+                    @keyup.enter="saveProvider"/>
+          <div class="provider-tip">{{ $t('addSendProviderDesc') }}</div>
+          <el-button type="primary" :loading="settingLoading" @click="saveProvider">{{ $t('save') }}</el-button>
         </form>
       </el-dialog>
       <el-dialog v-model="turnstileShow" :title="$t('addTurnstileSecret')" width="340"
@@ -725,11 +741,13 @@ Authorization: &lt;secret&gt;</pre>
           </div>
         </template>
       </el-dialog>
-      <el-dialog class="resend-table" v-model="showResendList" :title="$t('resendTokenList')">
-        <el-table :data="resendList">
-          <el-table-column :min-width="emailColumnWidth" property="key" :label="$t('domain')"
+      <el-dialog class="resend-table" v-model="showProviderList" :title="$t('sendProviderList')">
+        <el-table :data="providerListData">
+          <el-table-column :min-width="emailColumnWidth" property="domain" :label="$t('domain')"
                            :show-overflow-tooltip="true"/>
-          <el-table-column :width="tokenColumnWidth" property="value" label="Token" fixed="right"
+          <el-table-column :width="130" property="providerName" :label="$t('sendProvider')"
+                           :show-overflow-tooltip="true"/>
+          <el-table-column :width="tokenColumnWidth" property="token" label="Token" fixed="right"
                            :show-overflow-tooltip="true"/>
         </el-table>
       </el-dialog>
@@ -958,7 +976,7 @@ const localUpShow = ref(false)
 const accountStore = useAccountStore();
 const userStore = useUserStore();
 const editTitleShow = ref(false)
-const resendTokenFormShow = ref(false)
+const providerFormShow = ref(false)
 const blackFormShow = ref(false)
 const autoCleanShow = ref(false)
 const aiCodeFilterShow = ref(false)
@@ -969,7 +987,7 @@ const thirdEmailShow = ref(false)
 const webhookShow = ref(false)
 const forwardRulesShow = ref(false)
 const emailPrefixShow = ref(false)
-const showResendList = ref(false)
+const showProviderList = ref(false)
 const settingStore = useSettingStore();
 const uiStore = useUiStore();
 const {settings: setting} = storeToRefs(settingStore);
@@ -992,9 +1010,11 @@ const addS3Show = ref(false)
 const addVerifyCountShow = ref(false)
 const regVerifyCountShow = ref(false)
 const loginVerifyCountShow = ref(false)
-const resendTokenForm = reactive({
+const providerForm = reactive({
   domain: '',
+  provider: 'resend',
   token: '',
+  accountId: '',
 })
 const turnstileForm = reactive({
   siteKey: '',
@@ -1096,7 +1116,7 @@ function getSettings() {
   settingQuery().then(settingData => {
     setting.value = settingData
     settingStore.domainList = settingData.domainList;
-    resendTokenForm.domain = setting.value.domainList[0]
+    providerForm.domain = setting.value.domainList[0]
     loginOpacity.value = setting.value.loginOpacity
     minEmailPrefix.value = setting.value.minEmailPrefix
     firstLoading.value = false
@@ -1145,27 +1165,56 @@ function resetAddS3Form() {
   s3.forcePathStyle = setting.value.forcePathStyle
 }
 
-const resendList = computed(() => {
+// 已配置的发件服务列表，token 由服务端脱敏返回
+const providerListData = computed(() => {
 
-  let list = Object.keys(setting.value.resendTokens).map(key => {
+  const providers = setting.value.sendProviders || {}
+
+  let list = Object.keys(providers).map(key => {
     return {
-      key: key,
-      value: setting.value.resendTokens[key]
+      domain: key,
+      providerName: providerName(providers[key].provider),
+      token: providers[key].token
     };
   })
 
   if (list.length > 0) {
 
-    const key = list.reduce((a, b) => compareByLengthAndUpperCase(a, b, 'key')).key;
+    const key = list.reduce((a, b) => compareByLengthAndUpperCase(a, b, 'domain')).domain;
     emailColumnWidth.value = getTextWidth(key) + 30;
 
-    const value = list.reduce((a, b) => compareByLengthAndUpperCase(a, b, 'value')).value;
+    const value = list.reduce((a, b) => compareByLengthAndUpperCase(a, b, 'token')).token;
     tokenColumnWidth.value = getTextWidth(value) + 30;
 
   }
 
   return list;
 });
+
+// 服务端 setting.sendProviderList 优先，接口未返回时用内置列表兜底
+const defaultProviderOptions = [
+  {id: 'resend', name: 'Resend', tokenHint: 're_xxxxxxxx', accountId: false},
+  {id: 'mailtrap', name: 'Mailtrap', tokenHint: 'Mailtrap API Token', accountId: false},
+  {id: 'ahasend', name: 'AhaSend', tokenHint: 'AhaSend API Key', accountId: true},
+  {id: 'plunk', name: 'Plunk', tokenHint: 'sk_xxxxxxxx', accountId: false},
+]
+
+const providerOptions = computed(() => setting.value.sendProviderList || defaultProviderOptions)
+
+const providerFormNeedAccountId = computed(() => {
+  const item = providerOptions.value.find(option => option.id === providerForm.provider)
+  return !!item?.accountId
+})
+
+const providerTokenPlaceholder = computed(() => {
+  const item = providerOptions.value.find(option => option.id === providerForm.provider)
+  return item?.tokenHint || t('addSendProviderDesc')
+})
+
+function providerName(id) {
+  const item = providerOptions.value.find(option => option.id === id)
+  return item?.name || id
+}
 
 function getUpdate() {
   if (getUpdateErrorCount > 5 || !getUpdateErrorCount) return
@@ -1233,8 +1282,8 @@ function openNoticePopupSetting() {
   noticePopupShow.value = true
 }
 
-function openResendList() {
-  showResendList.value = true
+function openProviderList() {
+  showProviderList.value = true
 }
 
 function resetNoticeForm() {
@@ -1637,8 +1686,11 @@ function openCut() {
   }
 }
 
-function openResendForm() {
-  resendTokenFormShow.value = true
+function openProviderForm() {
+  if (!providerForm.domain) {
+    providerForm.domain = setting.value.domainList[0]
+  }
+  providerFormShow.value = true
 }
 
 function openBlackListForm() {
@@ -1649,25 +1701,31 @@ function openAiCodeFilter() {
   aiCodeFilterShow.value = true
 }
 
-function saveResendToken() {
+function saveProvider() {
   const settingForm = {
-    resendTokens: {}
+    sendProviders: {}
   }
-  const domain = resendTokenForm.domain.slice(1)
-  settingForm.resendTokens[domain] = resendTokenForm.token
+  const domain = providerForm.domain.slice(1)
+  settingForm.sendProviders[domain] = {
+    provider: providerForm.provider,
+    token: providerForm.token,
+    accountId: providerFormNeedAccountId.value ? providerForm.accountId : ''
+  }
   editSetting(settingForm)
 }
 
 function backupSetting() {
   const settingForm = {...setting.value}
   delete settingForm.resendTokens
+  delete settingForm.sendProviders
   delete settingForm.siteKey
   delete settingForm.secretKey
   backup = JSON.stringify(setting.value)
 }
 
-function cleanResendTokenForm() {
-  resendTokenForm.token = ''
+function cleanProviderForm() {
+  providerForm.token = ''
+  providerForm.accountId = ''
 }
 
 function beforeChange() {
@@ -1685,6 +1743,7 @@ function change(e) {
   delete settingForm.s3SecretKey
   delete settingForm.tgBotToken
   delete settingForm.resendTokens
+  delete settingForm.sendProviders
   editSetting(settingForm, false)
 }
 
@@ -1723,7 +1782,7 @@ function editSetting(settingForm, refreshStatus = true) {
       getSettings()
     }
     editTitleShow.value = false
-    resendTokenFormShow.value = false
+    providerFormShow.value = false
     turnstileShow.value = false
     tgSettingShow.value = false
     thirdEmailShow.value = false
@@ -2236,6 +2295,12 @@ function editSetting(settingForm, refreshStatus = true) {
   .el-button {
     margin-top: 0;
   }
+}
+
+.provider-tip {
+  font-size: 12px;
+  opacity: 0.6;
+  margin: 6px 0 0;
 }
 
 .token-item {

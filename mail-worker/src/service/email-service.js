@@ -10,6 +10,7 @@ import BizError from '../error/biz-error';
 import emailUtils from '../utils/email-utils';
 import fileUtils from '../utils/file-utils';
 import { Resend } from 'resend';
+import sendProviderService, { sendProviderConst } from './send-provider-service';
 import attService from './att-service';
 import { parseHTML } from 'linkedom';
 import userService from './user-service';
@@ -421,7 +422,7 @@ const emailService = {
 		ccEmail.forEach(address => takenAddress.add(address.toLowerCase()));
 		bccEmail = bccEmail.filter(address => !takenAddress.has(address.toLowerCase()));
 
-		const { resendTokens, r2Domain, send, domainList } = await settingService.query(c);
+		const { sendProviders, r2Domain, send, domainList } = await settingService.query(c);
 
 		// 引用正文里的 /proxy?url= 还原成原始外链再发。
 		content = proxyService.restoreHtml(content);
@@ -498,11 +499,12 @@ const emailService = {
 		}
 
 		const domain = emailUtils.getDomain(accountRow.email);
-		const resendToken = resendTokens[domain];
+		// 域名对应的发件服务配置，provider 为 resend / mailtrap / ahasend / plunk
+		const providerConfig = sendProviders[domain];
 		const useCloudflareEmail = !!c.env.email;
 
 		//如果接收方存在站外邮箱，又没有发信服务
-		if (!useCloudflareEmail && !resendToken && !allInternal) {
+		if (!useCloudflareEmail && !providerConfig && !allInternal) {
 			throw new BizError(t('noSendProvider'));
 		}
 
@@ -556,7 +558,7 @@ const emailService = {
 
 		// sendParams 用于渠道请求，saveParams 保留保存记录所需的账号、权限和附件数据。
 		const context = {
-			separate, allInternal, useCloudflareEmail, resendToken, sendParams,
+			separate, allInternal, useCloudflareEmail, providerConfig, sendParams,
 			saveParams: {
 				accountId, userId, name, subject, text, html,
 				sendEmail: accountRow.email,
@@ -567,14 +569,14 @@ const emailService = {
 			}
 		};
 
-		// 全部站内收件人走本地投递；存在站外收件人时优先 CF，其次 Resend。
+		// 全部站内收件人走本地投递；存在站外收件人时优先 CF，其次域名配置的发件服务。
 		let deliveries;
 		if (allInternal) {
 			deliveries = this.sendInternal(c, context);
 		} else if (useCloudflareEmail) {
 			deliveries = this.sendCloudflare(c, context);
 		} else {
-			deliveries = this.sendResend(c, context);
+			deliveries = this.sendProvider(c, context);
 		}
 
 		const emailResults = [];
@@ -642,42 +644,73 @@ const emailService = {
 		}
 	},
 
-	// Resend 分开发送一次最多提交 100 封独立邮件，普通发送仍调用单封接口。
-	async *sendResend(c, { separate, resendToken, sendParams, saveParams }) {
-		if (separate && sendParams.receiveEmail.length > 100) {
-			throw new BizError(t('resendRecipientLimit'));
-		}
-		// 批量接口不支持附件，包含正文转换得到的内嵌附件。
-		if (separate && sendParams.attachments.length > 0) {
-			throw new BizError(t('resendSeparateAttachments'));
-		}
-		let result;
-		try {
-			result = separate
-				? await this.sendBatchByResend(resendToken, sendParams)
-				: await this.sendByResend(resendToken, sendParams);
-		} catch (error) {
-			if (!separate) throw error;
-			yield { error: { message: error.message } };
-			return;
-		}
-		if (result.error) {
-			yield { error: result.error };
-			return;
-		}
-		// 严格校验模式下，批量返回的邮件 ID 按提交顺序对应各收件人。
-		const items = separate
-			? sendParams.receiveEmail.map((address, index) => ({
-				receiveEmail: [address], id: result.data.data[index].id
-			}))
-			: [{ receiveEmail: sendParams.receiveEmail, id: result.data?.id }];
-		const emails = [];
-		for (const item of items) {
-			emails.push(await this.saveSentEmail(c, {
-				...saveParams, receiveEmail: item.receiveEmail, providerId: item.id
+	// 站外发件：交给域名配置的服务商（Resend / Mailtrap / AhaSend / Plunk），分开发送时逐人提交。
+	async *sendProvider(c, { separate, providerConfig, sendParams, saveParams }) {
+		// Resend 提供批量接口，分开发送时一次提交可以减少请求数。
+		if (separate && providerConfig.provider === sendProviderConst.RESEND) {
+			if (sendParams.receiveEmail.length > 100) {
+				throw new BizError(t('resendRecipientLimit'));
+			}
+			// 批量接口不支持附件，包含正文转换得到的内嵌附件。
+			if (sendParams.attachments.length > 0) {
+				throw new BizError(t('resendSeparateAttachments'));
+			}
+			let result;
+			try {
+				result = await this.sendBatchByResend(providerConfig.token, sendParams);
+			} catch (error) {
+				yield { error: { message: error.message } };
+				return;
+			}
+			if (result.error) {
+				yield { error: result.error };
+				return;
+			}
+			// 严格校验模式下，批量返回的邮件 ID 按提交顺序对应各收件人。
+			const batchItems = sendParams.receiveEmail.map((address, index) => ({
+				receiveEmail: [address], id: result.data.data[index]?.id
 			}));
+			const batchEmails = [];
+			for (const item of batchItems) {
+				batchEmails.push(await this.saveSentEmail(c, {
+					...saveParams, receiveEmail: item.receiveEmail, providerId: item.id
+				}));
+			}
+			yield { emails: batchEmails };
+			return;
 		}
-		yield { emails };
+
+		const recipientGroups = separate
+			? sendParams.receiveEmail.map(address => [address])
+			: [sendParams.receiveEmail];
+		// 附件只做一次 base64 转换，分开发送时各收件人复用
+		const attachments = await this.toProviderAttachments(sendParams.attachments);
+		const headers = this.replyHeaders(sendParams);
+
+		for (const receiveEmail of recipientGroups) {
+			let result;
+			try {
+				result = await sendProviderService.send(providerConfig, {
+					from: { email: sendParams.accountEmail, name: sendParams.name },
+					to: receiveEmail,
+					cc: sendParams.ccEmail,
+					bcc: sendParams.bccEmail,
+					subject: sendParams.subject,
+					text: sendParams.text,
+					html: sendParams.html,
+					headers,
+					attachments
+				});
+			} catch (error) {
+				// 分开发送遇到渠道错误即停止，已成功的记录由入口汇总。
+				if (!separate) throw error;
+				yield { error: { message: error.message } };
+				return;
+			}
+			yield {
+				emails: [await this.saveSentEmail(c, { ...saveParams, receiveEmail, providerId: result?.id })]
+			};
+		}
 	},
 
 	// 三个渠道共用的发件记录保存：恢复正文图片 URL、保存附件并更新发送计数。
@@ -696,6 +729,7 @@ const emailService = {
 			content: this.imgReplace(html, imageDataList, r2Domain),
 			status: useCloudflareEmail ? emailConst.status.DELIVERED : emailConst.status.SENT,
 			type: emailConst.type.SEND,
+			// 各服务商返回的邮件 ID 统一存这里，供 webhook 回调更新投递状态
 			resendEmailId: providerId,
 			recipient: JSON.stringify(receiveEmail.map(address => ({ address, name: '' }))),
 			cc: JSON.stringify(ccEmail.map(address => ({ address, name: '' }))),
@@ -804,34 +838,36 @@ const emailService = {
 		};
 	},
 
-	async sendByResend(resendToken, params) {
-		const resend = new Resend(resendToken);
-
-		const sendForm = {
-			from: `${params.name} <${params.accountEmail}>`,
-			to: [...params.receiveEmail],
-			subject: params.subject,
-			text: params.text,
-			html: params.html,
-			attachments: await this.toResendAttachments(params.attachments)
+	// 回复邮件带上原始 Message-ID，各服务商都通过自定义头透传
+	replyHeaders(params) {
+		if (params.sendType !== 'reply' || !params.messageId) {
+			return {};
+		}
+		return {
+			'in-reply-to': params.messageId,
+			'references': params.messageId
 		};
+	},
 
-		if (params.ccEmail.length > 0) {
-			sendForm.cc = [...params.ccEmail];
+	// 统一附件结构：base64 内容、文件名、MIME 类型和内嵌 Content-ID
+	async toProviderAttachments(attachments = []) {
+		const result = [];
+
+		for (const attachment of attachments) {
+			const content = await this.toAttachmentBase64(attachment);
+			if (!content) {
+				continue;
+			}
+
+			result.push({
+				filename: attachment.filename || attachment.name || 'attachment',
+				content,
+				contentType: attachment.contentType || attachment.mimeType || attachment.type || 'application/octet-stream',
+				contentId: attachment.contentId || null
+			});
 		}
 
-		if (params.bccEmail.length > 0) {
-			sendForm.bcc = [...params.bccEmail];
-		}
-
-		if (params.sendType === 'reply') {
-			sendForm.headers = {
-				'in-reply-to': params.messageId,
-				'references': params.messageId
-			};
-		}
-
-		return await resend.emails.send(sendForm);
+		return result;
 	},
 
 	async toCloudflareAttachments(attachments) {
@@ -851,25 +887,6 @@ const emailService = {
 
 			return item;
 		});
-	},
-
-	async toResendAttachments(attachments = []) {
-		const result = [];
-
-		for (const attachment of attachments) {
-			const content = await this.toAttachmentBase64(attachment);
-			if (!content) {
-				continue;
-			}
-
-			result.push({
-				...attachment,
-				content,
-				contentType: attachment.contentType || attachment.mimeType || attachment.type || 'application/octet-stream'
-			});
-		}
-
-		return result;
 	},
 
 	async toArrayBufferAttachments(attachments = []) {

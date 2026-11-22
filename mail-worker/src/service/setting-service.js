@@ -10,12 +10,14 @@ import {t} from '../i18n/i18n'
 import verifyRecordService from './verify-record-service';
 import userContext from '../security/user-context';
 import domainUtils from '../utils/domain-uitls';
+import sendProviderService from './send-provider-service';
 
 const settingService = {
 
 	async refresh(c) {
 		const settingRow = await orm(c).select().from(setting).get();
 		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
+		settingRow.sendProviders = sendProviderService.parseProviders(settingRow.sendProviders, settingRow.resendTokens);
 		settingRow.r2Domain = '';
 		c.set('setting', settingRow);
 		await c.env.kv.put(KvConst.SETTING, JSON.stringify(settingRow));
@@ -63,6 +65,9 @@ const settingService = {
 		setting.loginVerify ??= settingConst.loginVerify.CLOSE;
 		setting.loginVerifyCount ??= 1;
 
+		// KV 缓存可能还是升级前的数据，这里统一补齐发件服务配置
+		setting.sendProviders = sendProviderService.parseProviders(setting.sendProviders, setting.resendTokens);
+
 		setting.emailPrefixFilter = setting.emailPrefixFilter.split(",").filter(Boolean);
 		setting.autoRefresh = Number(setting.autoRefresh) === 1 ? 1 : 2; // 1 关闭，2 开启
 
@@ -72,10 +77,12 @@ const settingService = {
 
 	async get(c) {
 
-		const [settingRow, recordList] = await Promise.all([
+		// 先浅拷贝再脱敏，避免脱敏值写回同一请求内缓存的配置
+		const [row, recordList] = await Promise.all([
 			await this.query(c),
 			verifyRecordService.selectListByIP(c)
 		]);
+		const settingRow = { ...row, resendTokens: { ...row.resendTokens } };
 
 		settingRow.secretKey = settingRow.secretKey ? `${settingRow.secretKey.slice(0, 6)}******` : null;
 
@@ -83,11 +90,15 @@ const settingService = {
 			settingRow.resendTokens[key] = `${settingRow.resendTokens[key].slice(0, 12)}******`;
 		});
 
+		settingRow.sendProviders = sendProviderService.maskProviders(settingRow.sendProviders);
+
 		settingRow.s3AccessKey = settingRow.s3AccessKey ? `${settingRow.s3AccessKey.slice(0, 12)}******` : null;
 		settingRow.s3SecretKey = settingRow.s3SecretKey ? `${settingRow.s3SecretKey.slice(0, 12)}******` : null;
 		settingRow.tgBotToken = settingRow.tgBotToken ? `${settingRow.tgBotToken.slice(0, 20)}******` : null;
 		settingRow.hasR2 = !!c.env.r2
 		settingRow.hasCfEmail = !!c.env.email
+		// 前台发件服务下拉选项，新增服务商时只改这里即可
+		settingRow.sendProviderList = sendProviderService.sendProviderList
 
 		let regVerifyOpen = false
 		let addVerifyOpen = false
@@ -121,6 +132,20 @@ const settingService = {
 			if (!resendTokens[domain]) delete resendTokens[domain];
 		});
 
+		// 发件服务配置：新版前端提交 sendProviders，旧版前端只提交 Resend Token，这里统一合并
+		const incomingProviders = { ...(params.sendProviders || {}) };
+		Object.keys(resendTokens).forEach(domain => {
+			if (!resendTokens[domain] || incomingProviders[domain] !== undefined) return;
+			incomingProviders[domain] = { provider: 'resend', token: resendTokens[domain] };
+		});
+		const sendProviders = sendProviderService.mergeProviders(settingData.sendProviders, incomingProviders);
+		const legacyResendTokens = {};
+		Object.keys(sendProviders).forEach(domain => {
+			if (sendProviders[domain].provider === 'resend' && sendProviders[domain].token) {
+				legacyResendTokens[domain] = sendProviders[domain].token;
+			}
+		});
+
 		if (Array.isArray(params.emailPrefixFilter)) {
 			params.emailPrefixFilter = params.emailPrefixFilter + '';
 		}
@@ -133,7 +158,8 @@ const settingService = {
 			params.webhookUrl = domainUtils.toOssDomain(params.webhookUrl) || '';
 		}
 
-		params.resendTokens = JSON.stringify(resendTokens);
+		params.resendTokens = JSON.stringify(legacyResendTokens);
+		params.sendProviders = JSON.stringify(sendProviders);
 
 		if (params.autoRefresh !== undefined) {
 			params.autoRefresh = Number(params.autoRefresh) === 1 ? 1 : 2;

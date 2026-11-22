@@ -27,6 +27,8 @@ export const setting = sqliteTable('setting', {
 	ruleType: integer('rule_type').default(0).notNull(),
 	loginOpacity: integer('login_opacity').default(0.88),
 	resendTokens: text('resend_tokens').default("{}").notNull(),
+	// 通用发件服务配置：{"example.com":{"provider":"resend","token":"re_xxx","accountId":""}}
+	sendProviders: text('send_providers').default("{}").notNull(),
 	noticeTitle: text('notice_title').default('').notNull(),
 	noticeContent: text('notice_content').default('').notNull(),
 	noticeType: text('notice_type').default('').notNull(),

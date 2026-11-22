@@ -1,0 +1,30 @@
+name = "cloud-mail-vitest"
+main = "src/index.js"
+compatibility_date = "2025-06-04"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "db"
+database_name = "email-test"
+database_id = "a4c1a63a-6ef5-4e6d-8e8c-b6d9e8feb810"
+
+[[kv_namespaces]]
+binding = "kv"
+id = "2io01d4b299e481b9de060ece9e7785c"
+
+[[durable_objects.bindings]]
+name = "ws"
+class_name = "MailHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MailHub"]
+
+[vars]
+ai_model = ""
+analysis_cache = false
+orm_log = false
+domain = ["example.com", "example2.com"]
+admin = "admin@example.com"
+password = ""
+jwt_secret = "b7f29a1d-18e2-4d3b-941f-f6b2c97c02fd"

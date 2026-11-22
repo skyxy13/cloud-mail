@@ -24,9 +24,34 @@ const dbInit = {
 		await this.v3_4DB(c);
 		await this.v3_5DB(c);
 		await this.v3_6DB(c);
+		await this.v3_7DB(c);
 		await userService.initAdmin(c);
 		await settingService.refresh(c);
 		return c.text('success');
+	},
+
+	async v3_7DB(c) {
+		try {
+			await c.env.db.prepare(`ALTER TABLE setting ADD COLUMN send_providers TEXT NOT NULL DEFAULT '{}'`).run();
+		} catch (e) {
+			console.warn(`sql skip:${e.message}`);
+		}
+
+		try {
+			// 旧版只支持 Resend Token，升级时迁移成通用发件服务配置
+			await c.env.db.prepare(`
+				UPDATE setting
+				SET send_providers = (
+					SELECT json_group_object(key, json_object('provider', 'resend', 'token', value))
+					FROM json_each(setting.resend_tokens)
+				)
+				WHERE (send_providers IS NULL OR send_providers = '' OR send_providers = '{}')
+					AND resend_tokens IS NOT NULL
+					AND resend_tokens NOT IN ('', '{}')
+			`).run();
+		} catch (e) {
+			console.warn(`sql skip:${e.message}`);
+		}
 	},
 
 	async v3_6DB(c) {
@@ -364,6 +389,7 @@ const dbInit = {
 						register_verify INTEGER NOT NULL DEFAULT 1,
 						add_email_verify INTEGER NOT NULL DEFAULT 1,
 						resend_tokens TEXT NOT NULL DEFAULT '{}',
+						send_providers TEXT NOT NULL DEFAULT '{}',
 						send INTEGER NOT NULL DEFAULT 0,
 						r2_domain TEXT,
 						site_key TEXT,
