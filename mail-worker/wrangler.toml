@@ -6,18 +6,19 @@ keep_vars = true
 [observability]
 enabled = true
 
-#[[d1_databases]]
-#binding = "db"			# D1 binding name; do not change
-#database_name = ""		# D1 database name
-#database_id = ""		# D1 database id
+# 注意：这些绑定必须留在配置里，否则每次 git 自动部署都会把线上绑定清空
+[[d1_databases]]
+binding = "db"			# D1 binding name; do not change
+database_name = "mail"		# D1 database name
+database_id = "800803f4-13cc-4917-87ed-14c8b62963d2"		# D1 database id
 
-#[[kv_namespaces]]
-#binding = "kv"			# KV binding name; do not change
-#id = ""					# KV namespace id
+[[kv_namespaces]]
+binding = "kv"			# KV binding name; do not change
+id = "7c74c0f53446487eb2c1a6b42a9eb242"					# KV namespace id
 
-#[[r2_buckets]]
-#binding = "r2"			# R2 binding name; do not change
-#bucket_name = ""		# R2 bucket name
+[[r2_buckets]]
+binding = "r2"			# R2 binding name; do not change
+bucket_name = "mail"		# R2 bucket name
 
 #[[send_email]]
 #name = "email"			# Cloudflare Email Sending; used first if configured
