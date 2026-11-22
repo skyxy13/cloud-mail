@@ -35,6 +35,8 @@ const en = {
 	notExistEmailReply: 'Mail does not exist and cannot be replied to',
 	imageAttLimit: 'The maximum number of image attachments is 10',
 	attLimit: 'The maximum number of attachments is 10.',
+	attachCountLimit: '{{provider}} allows at most {{count}} attachments per email',
+	attachSizeLimit: 'Email size {{current}} exceeds the {{provider}} limit of {{size}}',
 	resendRecipientLimit: 'Resend separate sending supports at most 100 recipients',
 	recipientLimit: 'To, CC, and BCC together cannot exceed 50 recipients',
 	resendSeparateAttachments: 'Resend separate sending does not support attachments',

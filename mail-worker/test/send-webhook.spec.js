@@ -126,6 +126,48 @@ describe('send webhook', () => {
 		expect(sendWebhookService.verifyPlunk(makeContext('', {authorization: 'Bearer other'}), 'token-1')).toBe(false);
 	});
 
+	it('only upgrades status, never regresses', () => {
+		expect(sendWebhookService.allowedFromStatuses(1)).toEqual([]); // SENT 不能被覆盖
+		expect(sendWebhookService.allowedFromStatuses(2)).toEqual([1, 5]); // DELIVERED 只能覆盖 SENT/DELAYED
+		expect(sendWebhookService.allowedFromStatuses(3)).toEqual([1, 2, 4, 5]); // BOUNCED 还能覆盖 DELIVERED/COMPLAINED
+		expect(sendWebhookService.allowedFromStatuses(8)).toEqual([1, 2, 3, 4, 5]);
+	});
+
+	it('keeps delivered status when events arrive out of order', async () => {
+		await env.db.prepare(`INSERT INTO email (account_id, user_id, send_email, subject, type, status, resend_email_id)
+			VALUES (1, 1, 'a@example.com', 'order test', 1, 1, 'order-1')`).run();
+
+		await sendWebhookService.handle(makeContext(JSON.stringify({
+			events: [{event: 'delivery', message_id: 'order-1', event_id: 'evt-1'}]
+		})), 'mailtrap');
+		let row = await env.db.prepare(`SELECT status FROM email WHERE resend_email_id = 'order-1'`).first();
+		expect(row.status).toBe(2);
+
+		// 乱序到达的 email.sent 不应把 DELIVERED 改回 SENT
+		await sendWebhookService.handle(makeContext(JSON.stringify({
+			type: 'email.sent', data: {email_id: 'order-1'}
+		})), 'resend');
+		row = await env.db.prepare(`SELECT status FROM email WHERE resend_email_id = 'order-1'`).first();
+		expect(row.status).toBe(2);
+
+		// 迟到的退信仍然可以覆盖 DELIVERED
+		await sendWebhookService.handle(makeContext(JSON.stringify({
+			events: [{event: 'bounce', message_id: 'order-1', response_code: 550, event_id: 'evt-2'}]
+		})), 'mailtrap');
+		row = await env.db.prepare(`SELECT status, message FROM email WHERE resend_email_id = 'order-1'`).first();
+		expect(row.status).toBe(3);
+		expect(JSON.parse(row.message).response_code).toBe(550);
+	});
+
+	it('ignores duplicated events', async () => {
+		const body = JSON.stringify({events: [{event: 'delivery', message_id: 'order-1', event_id: 'evt-dup'}]});
+		const first = await sendWebhookService.handle(makeContext(body), 'mailtrap');
+		const second = await sendWebhookService.handle(makeContext(body), 'mailtrap');
+		expect(second.ignored).toBe(1);
+		expect(second.updated).toBe(0);
+		expect(first).toBeTruthy();
+	});
+
 	it('accepts callbacks and rejects bad signatures', async () => {
 		const c = makeContext();
 
@@ -153,8 +195,22 @@ describe('send webhook', () => {
 		});
 		expect(res.status).toBe(200);
 
-		await settingService.set(c, {sendWebhookSecrets: {mailtrap: ''}});
+		// 强制校验：没有配置密钥时直接 403
+		await settingService.set(c, {sendWebhookStrict: 1, sendWebhookSecrets: {mailtrap: ''}});
+		res = await SELF.fetch('http://example.com/api/webhooks/mailtrap', {method: 'POST', body: '{}'});
+		expect(res.status).toBe(403);
+
+		// 配置密钥后带正确签名即可通过
+		await settingService.set(c, {sendWebhookSecrets: {mailtrap: 'c'.repeat(32)}});
+		const signedBody = JSON.stringify({events: [{event: 'delivery', message_id: '<unknown@example.com>'}]});
+		res = await SELF.fetch('http://example.com/api/webhooks/mailtrap', {
+			method: 'POST', body: signedBody, headers: {'mailtrap-signature': await hmacHex('c'.repeat(32), signedBody)}
+		});
+		expect(res.status).toBe(200);
+
+		await settingService.set(c, {sendWebhookStrict: 0, sendWebhookSecrets: {mailtrap: ''}});
 		const setting = await settingService.query(c);
 		expect(setting.sendWebhookSecrets.mailtrap).toBe('');
+		expect(Number(setting.sendWebhookStrict)).toBe(0);
 	});
 });

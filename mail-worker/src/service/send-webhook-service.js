@@ -7,6 +7,27 @@ import { sendProviderConst } from './send-provider-service';
 const emailStatus = emailConst.status;
 // 校验回调时间戳的有效期，防止重放
 const TIMESTAMP_TOLERANCE = 5 * 60;
+// 已处理事件的缓存时长（秒），用于回调重复投递去重
+const EVENT_CACHE_TTL = 7 * 24 * 60 * 60;
+
+// 状态优先级：数值越大越"终态"，只允许单向升级，避免乱序回调把终态改回去
+const statusRank = {
+	[emailStatus.SENT]: 10,
+	[emailStatus.DELAYED]: 20,
+	[emailStatus.DELIVERED]: 30,
+	[emailStatus.COMPLAINED]: 40,
+	[emailStatus.BOUNCED]: 45,
+	[emailStatus.FAILED]: 50
+};
+
+// 允许被 status 覆盖的当前状态列表（优先级更低的那些）
+function allowedFromStatuses(status) {
+	const rank = statusRank[status];
+	if (!rank) return [];
+	return Object.keys(statusRank)
+		.filter(key => statusRank[key] < rank)
+		.map(key => Number(key));
+}
 
 // Resend 事件 → 发件状态（保持原有行为）
 const resendEvents = {
@@ -145,6 +166,9 @@ function pickDetail(source, keys) {
 }
 
 const sendWebhookService = {
+
+	statusRank,
+	allowedFromStatuses,
 
 	// webhook 校验密钥按服务商单独配置，留空表示不校验
 	async secret(c, provider) {
@@ -286,40 +310,89 @@ const sendWebhookService = {
 		const ids = [...new Set([providerId, normalizeMessageId(providerId)].filter(Boolean))];
 		if (ids.length === 0) return null;
 
+		const fromStatuses = allowedFromStatuses(status);
+
 		for (const id of ids) {
 			const emailRow = await emailService.updateEmailStatus(c, {
-				resendEmailId: id, status, message
+				resendEmailId: id, status, message, fromStatuses
 			});
 			if (emailRow) return emailRow;
 		}
 
-		// 未知邮件事件（历史数据、重复投递、测试事件）：记录日志后正常返回，
+		// 没更新成功：可能是已经处于更高优先级的状态（乱序回调），也可能是未知邮件
+		const exists = await emailService.selectByResendEmailId(c, ids);
+		if (exists) {
+			return { ignored: true, currentStatus: exists.status };
+		}
+
+		// 未知邮件事件（历史数据、测试事件）：记录日志后正常返回，
 		// 避免服务商因连续收到 500 而熔断关闭 Webhook
 		console.warn(provider + ' webhook: unknown email id ' + providerId + ', status ' + status);
 		return null;
+	},
+
+	async strict(c) {
+		const { sendWebhookStrict } = await settingService.query(c);
+		return Number(sendWebhookStrict) === 1;
+	},
+
+	// 事件唯一标识：用于忽略服务商的重复投递
+	eventId(provider, event, c) {
+		if (provider === sendProviderConst.MAILTRAP) return event.event_id || null;
+		if (provider === sendProviderConst.AHASEND) return event.webhook_id || null;
+		if (provider === sendProviderConst.PLUNK) {
+			const data = typeof event.event === 'object' && event.event ? event.event : (event.data || event);
+			const time = data.bouncedAt || data.deliveredAt || data.complainedAt || data.sentAt || '';
+			return data.emailId && time ? data.emailId + ':' + time : null;
+		}
+		return c.req.header('svix-id') || null;
+	},
+
+	async isDuplicate(c, provider, eventId) {
+		if (!eventId || !c.env.kv) return false;
+		const key = 'webhook_event:' + provider + ':' + eventId;
+		if (await c.env.kv.get(key)) return true;
+		await c.env.kv.put(key, '1', { expirationTtl: EVENT_CACHE_TTL });
+		return false;
 	},
 
 	async handle(c, provider) {
 		const rawBody = await c.req.text();
 		const secret = await this.secret(c, provider);
 
-		if (secret && !(await this.verify(c, provider, rawBody, secret))) {
+		if (!secret) {
+			// 强制校验模式下，没有配置密钥就拒绝，避免任何人伪造投递状态
+			if (await this.strict(c)) {
+				console.warn(provider + ' webhook: signing secret is required but not configured');
+				throw new BizError(provider + ' webhook signing secret is not configured', 403);
+			}
+		} else if (!(await this.verify(c, provider, rawBody, secret))) {
 			console.warn(provider + ' webhook: signature verification failed');
 			throw new BizError(provider + ' webhook signature verification failed', 401);
 		}
 
 		const events = this.toEvents(parseBody(rawBody));
 		let updated = 0;
+		let ignored = 0;
 
 		for (const event of events) {
+			if (await this.isDuplicate(c, provider, this.eventId(provider, event, c))) {
+				ignored++;
+				continue;
+			}
+
 			const result = this.mapEvent(provider, event);
 			if (!result) continue;
-			if (await this.applyStatus(c, provider, result.providerId, result.status, result.message)) {
+
+			const applied = await this.applyStatus(c, provider, result.providerId, result.status, result.message);
+			if (applied && !applied.ignored) {
 				updated++;
+			} else if (applied?.ignored) {
+				ignored++;
 			}
 		}
 
-		return updated;
+		return { updated, ignored };
 	}
 };
 

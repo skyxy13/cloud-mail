@@ -18,9 +18,34 @@ export const sendProviderList = [
 	{ id: sendProviderConst.PLUNK, name: 'Plunk', tokenHint: 'sk_xxxxxxxx', accountId: false }
 ];
 
+// 各服务商的单封邮件体积限制（正文 + 附件，未编码前的字节数），用于发件前校验：
+// Resend 单封 40MB；Mailtrap 单封 10MB（Business 及以上可申请到 30MB）；
+// AhaSend 整封 20MiB（请求体 30MB）；Plunk 附件合计 10MB。
+const providerLimitTable = {
+	resend: { maxAttachments: 10, maxTotalBytes: 40 * 1024 * 1024 },
+	mailtrap: { maxAttachments: 10, maxTotalBytes: 10 * 1024 * 1024 },
+	ahasend: { maxAttachments: 10, maxTotalBytes: 20 * 1024 * 1024 },
+	plunk: { maxAttachments: 10, maxTotalBytes: 10 * 1024 * 1024 }
+};
+
+// 把体积限制挂到列表项上，前端可直接展示
+sendProviderList.forEach(item => {
+	const limit = providerLimitTable[item.id];
+	item.limits = limit ? { ...limit, maxTotalText: formatSize(limit.maxTotalBytes) } : null;
+});
+
 const providerIds = sendProviderList.map(item => item.id);
 const MASK = '******';
 const REQUEST_TIMEOUT = 30000;
+
+
+function formatSize(bytes) {
+	if (!bytes) return '0';
+	if (bytes >= 1024 * 1024) {
+		return (bytes / 1024 / 1024).toFixed(bytes % (1024 * 1024) === 0 ? 0 : 1) + 'MB';
+	}
+	return Math.ceil(bytes / 1024) + 'KB';
+}
 
 function toJson(value, fallback = {}) {
 	if (!value) return fallback;
@@ -113,6 +138,22 @@ const sendProviderService = {
 
 	sendProviderList,
 	sendProviderConst,
+	providerLimitTable,
+
+	// 取某服务商的体积限制，附带展示用的名字
+	limits(providerId) {
+		const limit = providerLimitTable[providerId] || providerLimitTable[sendProviderConst.RESEND];
+		const item = sendProviderList.find(option => option.id === providerId);
+		return {
+			provider: providerId,
+			name: item?.name || providerId,
+			maxAttachments: limit.maxAttachments,
+			maxTotalBytes: limit.maxTotalBytes,
+			maxTotalText: formatSize(limit.maxTotalBytes)
+		};
+	},
+
+	formatSize,
 
 	// 读取数据库/KV 中的配置，兼容旧版只配置 Resend Token 的站点
 	parseProviders(value, legacyResendTokens) {

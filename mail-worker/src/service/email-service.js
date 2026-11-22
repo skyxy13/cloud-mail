@@ -554,6 +554,11 @@ const emailService = {
 			if (perMessageCount > 50) {
 				throw new BizError(t('recipientLimit'));
 			}
+
+			// 服务商对单封邮件体积有硬限制，先做本地校验，避免上传后才发现超限
+			if (!useCloudflareEmail) {
+				this.checkAttachLimit(providerConfig, sendParams);
+			}
 		}
 
 		// sendParams 用于渠道请求，saveParams 保留保存记录所需的账号、权限和附件数据。
@@ -868,6 +873,47 @@ const emailService = {
 		}
 
 		return result;
+	},
+
+	// 单封邮件体积校验：正文 + 附件（未编码前的字节数）不能超过服务商限制
+	checkAttachLimit(providerConfig, sendParams) {
+		const limit = sendProviderService.limits(providerConfig.provider);
+		const count = sendParams.attachments.length;
+
+		if (count > limit.maxAttachments) {
+			throw new BizError(t('attachCountLimit', { provider: limit.name, count: limit.maxAttachments }));
+		}
+
+		const total = this.textBytes(sendParams.html) + this.textBytes(sendParams.text)
+			+ sendParams.attachments.reduce((sum, item) => sum + this.attachmentBytes(item), 0);
+
+		if (total > limit.maxTotalBytes) {
+			throw new BizError(t('attachSizeLimit', {
+				provider: limit.name,
+				size: limit.maxTotalText,
+				current: sendProviderService.formatSize(total)
+			}));
+		}
+	},
+
+	textBytes(text) {
+		if (!text) return 0;
+		// UTF-8 下中文最多 3 字节，这里按字节上限估算即可
+		return new TextEncoder().encode(text).byteLength;
+	},
+
+	attachmentBytes(attachment) {
+		const content = attachment?.content;
+		if (typeof content === 'string') {
+			if (content.startsWith('data:')) {
+				const base64 = content.slice(content.indexOf(',') + 1);
+				return Math.floor(base64.length * 3 / 4);
+			}
+			// 纯 base64 字符串
+			return Math.floor(content.length * 3 / 4);
+		}
+		if (content?.byteLength) return content.byteLength;
+		return Number(attachment?.size) || 0;
 	},
 
 	async toCloudflareAttachments(attachments) {
@@ -1261,12 +1307,26 @@ const emailService = {
 		await orm(c).delete(email).where(inArray(email.userId, userIds)).run();
 	},
 
+	// fromStatuses 用于状态机保护：只允许从这些状态升级，避免乱序回调把终态改回去
 	updateEmailStatus(c, params) {
-		const { status, resendEmailId, message } = params;
+		const { status, resendEmailId, message, fromStatuses } = params;
+		const where = [eq(email.resendEmailId, resendEmailId)];
+		if (Array.isArray(fromStatuses)) {
+			where.push(inArray(email.status, fromStatuses));
+		}
+
 		return orm(c).update(email).set({
 			status: status,
 			message: message
-		}).where(eq(email.resendEmailId, resendEmailId)).returning().get();
+		}).where(and(...where)).returning().get();
+	},
+
+	async selectByResendEmailId(c, resendEmailIdList) {
+		return orm(c)
+			.select({ emailId: email.emailId, status: email.status })
+			.from(email)
+			.where(inArray(email.resendEmailId, resendEmailIdList))
+			.get();
 	},
 
 	async selectUserEmailCountList(c, userIds, type, del = isDel.NORMAL) {

@@ -63,6 +63,34 @@ describe('send provider config', () => {
 	});
 });
 
+describe('provider limits', () => {
+	it('exposes per provider size limits', () => {
+		const mailtrap = sendProviderService.limits('mailtrap');
+		expect(mailtrap).toMatchObject({provider: 'mailtrap', name: 'Mailtrap', maxAttachments: 10});
+		expect(mailtrap.maxTotalBytes).toBe(10 * 1024 * 1024);
+		expect(mailtrap.maxTotalText).toBe('10MB');
+		expect(sendProviderService.limits('ahasend').maxTotalText).toBe('20MB');
+		expect(sendProviderService.limits('unknown-provider').maxTotalText).toBe('40MB');
+	});
+
+	it('rejects attachments over the provider limit', async () => {
+		const emailService = (await import('../src/service/email-service')).default;
+		const big = { filename: 'a.bin', content: 'A'.repeat(9 * 1024 * 1024) };
+		const sendParams = {attachments: [big], html: '', text: ''};
+
+		// Mailtrap 单封 10MB，9MB 的 base64 约 6.75MB，可以过
+		expect(() => emailService.checkAttachLimit({provider: 'mailtrap'}, sendParams)).not.toThrow();
+		// Plunk 只有 10MB，但附件数超限时先报个数
+		expect(() => emailService.checkAttachLimit({provider: 'plunk'}, {
+			attachments: new Array(11).fill(big), html: '', text: ''
+		})).toThrow(/Plunk/);
+		// 超体积
+		expect(() => emailService.checkAttachLimit({provider: 'plunk'}, {
+			attachments: [{ filename: 'b.bin', content: 'A'.repeat(15 * 1024 * 1024) }], html: '', text: ''
+		})).toThrow(/10MB/);
+	});
+});
+
 describe('provider requests', () => {
 	beforeEach(() => { vi.restoreAllMocks(); });
 

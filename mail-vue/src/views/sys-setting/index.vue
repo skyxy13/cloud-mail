@@ -532,6 +532,9 @@
                 :label="item.name"
                 :value="item.id"/>
           </el-select>
+          <div v-if="providerLimitText" class="provider-tip" style="margin-bottom: 12px">
+            {{ $t('providerLimitHint', {provider: providerLimitName, size: providerLimitText}) }}
+          </div>
           <el-input v-if="providerFormNeedAccountId" style="margin-bottom: 15px" type="text"
                     :placeholder="$t('ahaSendAccountId')" v-model="providerForm.accountId"/>
           <el-input type="text" :placeholder="providerTokenPlaceholder" v-model="providerForm.token"
@@ -543,6 +546,16 @@
       <el-dialog v-model="webhookSecretShow" :title="$t('sendWebhookSecret')" width="480"
                  @closed="cleanWebhookSecretForm">
         <form @submit.prevent>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px">
+            <div>
+              <span>{{ $t('sendWebhookStrict') }}</span>
+              <el-tooltip effect="dark" :content="$t('sendWebhookStrictDesc')">
+                <Icon class="warning" icon="fe:warning" width="18" height="18"/>
+              </el-tooltip>
+            </div>
+            <el-switch :active-value="1" :inactive-value="0" v-model="setting.sendWebhookStrict"
+                       @change="value => changeField('sendWebhookStrict', value)"/>
+          </div>
           <el-input v-for="item in providerOptions" :key="item.id" style="margin-bottom: 12px"
                     type="password" show-password
                     v-model="webhookSecretForm[item.id]"
@@ -1244,6 +1257,16 @@ const providerFormNeedAccountId = computed(() => {
 const providerTokenPlaceholder = computed(() => {
   const item = providerOptions.value.find(option => option.id === providerForm.provider)
   return item?.tokenHint || t('addSendProviderDesc')
+})
+
+const providerLimitName = computed(() => {
+  const item = providerOptions.value.find(option => option.id === providerForm.provider)
+  return item?.name || providerForm.provider
+})
+
+const providerLimitText = computed(() => {
+  const item = providerOptions.value.find(option => option.id === providerForm.provider)
+  return item?.limits?.maxTotalText || ''
 })
 
 function providerName(id) {

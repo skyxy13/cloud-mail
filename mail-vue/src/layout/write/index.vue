@@ -453,6 +453,28 @@ function chooseFile() {
   }
 }
 
+function checkAttachLimit() {
+  const domain = (form.sendEmail || '').split('@')[1]
+  const limits = settingStore.settings.sendProviderLimits || {}
+  const limit = domain ? limits[domain] : null
+  if (!limit) return ''
+
+  if (limit.maxAttachments && form.attachments.length > limit.maxAttachments) {
+    return t('attachCountLimit', {provider: limit.name, count: limit.maxAttachments})
+  }
+
+  const total = form.attachments.reduce((sum, item) => sum + (item.size || 0), 0)
+  if (limit.maxTotalBytes && total > limit.maxTotalBytes) {
+    return t('attachSizeLimit', {
+      provider: limit.name,
+      size: limit.maxTotalText,
+      current: formatBytes(total)
+    })
+  }
+
+  return ''
+}
+
 async function sendEmail() {
   hideEmptyCcBcc()
 
@@ -488,6 +510,17 @@ async function sendEmail() {
   if (sending) {
     ElMessage({
       message: t('sendingErrorMsg'),
+      type: 'error',
+      plain: true,
+    })
+    return
+  }
+
+  // 按当前发件域名对应的服务商限制做预校验，避免上传完才发现超限
+  const attachLimitMsg = checkAttachLimit()
+  if (attachLimitMsg) {
+    ElMessage({
+      message: attachLimitMsg,
       type: 'error',
       plain: true,
     })

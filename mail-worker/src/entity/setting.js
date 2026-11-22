@@ -31,6 +31,8 @@ export const setting = sqliteTable('setting', {
 	sendProviders: text('send_providers').default("{}").notNull(),
 	// 各发件服务商的 webhook 校验密钥：{"resend":"whsec_xxx","mailtrap":"...","ahasend":"whsec_xxx","plunk":"..."}
 	sendWebhookSecrets: text('send_webhook_secrets').default("{}").notNull(),
+	// 1 表示回调必须带签名密钥，未配置密钥时直接拒绝
+	sendWebhookStrict: integer('send_webhook_strict').default(0).notNull(),
 	noticeTitle: text('notice_title').default('').notNull(),
 	noticeContent: text('notice_content').default('').notNull(),
 	noticeType: text('notice_type').default('').notNull(),

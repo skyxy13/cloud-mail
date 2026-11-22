@@ -62,6 +62,9 @@
 | Plunk | `/api/webhooks/plunk` | `email.delivery` `email.bounce` `email.complaint`（默认载荷不带事件名，按 `deliveredAt` / `bouncedAt` / `complainedAt` 字段判断） | 可选：`Authorization: Bearer <密钥>` 或 `X-Webhook-Token` |
 
 - 校验密钥在「系统设置 → 回调校验密钥」里填写，留空表示不校验；配置后签名不正确的请求直接返回 401。
+- 同一页可以打开「强制校验回调」：开启后**没有配置密钥的回调一律返回 403**，避免任何人伪造投递状态（升级默认关闭，避免旧站点回调被打断）。
+- **状态只升不降**：`SENT < DELAYED < DELIVERED < COMPLAINED < BOUNCED < FAILED`，只允许升级，乱序到达的旧事件（例如 `email.sent` 晚于 `email.delivered`）不会把终态改回去。
+- **重复投递去重**：Mailtrap `event_id`、AhaSend `webhook_id`、Resend `svix-id`、Plunk `emailId + 时间戳` 会写入 KV（保留 7 天），重复事件直接忽略。
 - Mailtrap 支持 JSON 和 JSON Lines 两种载荷，两种都能解析。
 - 服务商返回的邮件 ID 会先归一化（去掉 `<>` 和 `@域名` 后缀）再匹配 `email.resend_email_id`，所以 Mailtrap 的 `<uuid@域名>` 也能对上。
 - 未知邮件、重复投递、测试事件都会返回 200 并记录日志，避免服务商因连续收到 500 而熔断关闭 webhook。
@@ -69,6 +72,20 @@
 - **AhaSend**：在控制台 Webhooks 页面新建 endpoint，勾选 `message.*` 事件，即可拿到 `whsec_` 签名密钥。
 - **Mailtrap**：Webhooks → Create New Webhook，区域选 Email Live Sending（Transactional 流），选事件后可在详情里查看签名密钥。
 - **Resend**：Webhooks → Add Endpoint，URL 填 `https://你的域名/api/webhooks/resend`，签名密钥同样以 `whsec_` 开头。
+
+## 体积限制
+
+发件前会按服务商限制做本地校验（正文 + 附件，未 base64 编码前的字节数），超限直接报错，不会先把附件传完再失败：
+
+| 服务商 | 单封上限 | 附件个数 |
+| --- | --- | --- |
+| Resend | 40 MB | 10 |
+| Mailtrap | 10 MB（Business 及以上可申请到 30 MB） | 10 |
+| AhaSend | 20 MiB（请求体 30 MB） | 10 |
+| Plunk | 10 MB（附件合计） | 10 |
+
+- 服务端校验在 `emailService.checkAttachLimit`，前端在发件前用 `websiteConfig.sendProviderLimits`（按域名下发，只含限制、不含密钥）先做一次预检。
+- 限制值集中在 `send-provider-service.js` 的 `providerLimitTable`，服务商调整额度时改这一处即可。
 
 ## 分开发送
 

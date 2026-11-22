@@ -290,6 +290,12 @@ const settingService = {
 			loginOpacity: settingRow.loginOpacity,
 			domainList: settingRow.loginDomain === 1 && !token ? [] : settingRow.domainList,
 			regKey: settingRow.regKey,
+			// 各域名发件服务商的体积限制，前端发件前预校验用（不含任何密钥，仅登录用户可见）
+			sendProviderLimits: token ? Object.fromEntries(
+				Object.entries(settingRow.sendProviders || {}).map(([domain, item]) => [
+					domain, sendProviderService.limits(item.provider)
+				])
+			) : {},
 			regVerifyOpen: settingRow.regVerifyOpen,
 			addVerifyOpen: settingRow.addVerifyOpen,
 			loginVerifyOpen: settingRow.loginVerifyOpen,
