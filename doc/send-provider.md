@@ -32,6 +32,9 @@
 3. 当前发件域名的服务商 → Resend / Mailtrap / AhaSend / Plunk
 4. 都没有 → 报错「发信服务未配置，只能给站内邮箱发件」
 
+每次发件都会把实际使用的渠道写进 `email.provider`（`internal` / `cloudflare` / `resend` / `mailtrap` / `ahasend` / `plunk`），
+一方面便于统计各服务商的使用量与成功率，另一方面回调会校验 `provider` 是否一致，避免别的服务商（或伪造请求）改状态。
+
 ## 服务商对照
 
 | 服务商 | API Key 获取 | 请求端点 | 附件 | 抄送 / 密送 |
@@ -73,6 +76,14 @@
 - **Mailtrap**：Webhooks → Create New Webhook，区域选 Email Live Sending（Transactional 流），选事件后可在详情里查看签名密钥。
 - **Resend**：Webhooks → Add Endpoint，URL 填 `https://你的域名/api/webhooks/resend`，签名密钥同样以 `whsec_` 开头。
 
+## 重试与主备切换
+
+- **重试**：服务商返回 408 / 425 / 429 / 5xx 或出现网络错误时，最多重试 3 次，间隔 400ms → 800ms 指数退避并带抖动；仍失败才把错误抛给用户。
+- **主备切换**：在「发件服务」里可以给域名再配一个**备用服务商**（另一个服务商 + 它的 API Key）。主服务商**明确返回错误码**（4xx/5xx/429）时才切到备用；
+  网络超时**不会**切换——那种情况下邮件可能已经投递，切换会导致重复发送。
+- **并发**：「分开发送」时按 3 个并发提交，避免上百封串行等待超时；每封的发件记录独立保存，失败的收件人会回传给前端重试。
+- 备注：主备两个服务商都要验证同一个发件域名，否则备用会因域名未验证被拒。
+
 ## 体积限制
 
 发件前会按服务商限制做本地校验（正文 + 附件，未 base64 编码前的字节数），超限直接报错，不会先把附件传完再失败：
@@ -91,13 +102,19 @@
 
 「分开发送」会为每位收件人单独创建一条发件记录（附件、正文内嵌图每封都会带上）。除 Resend 走批量接口外，其余服务商按收件人逐个调用 API，失败时已成功的记录会保留，前端可以只重试失败收件人。
 
+## 数据库升级
+
+- 所有迁移在 `/init/{jwt_secret}` 里按顺序执行，执行结果登记到 `db_migration`（`name` / `version` / `applied_at`），方便排查线上到底是哪个版本。
+- `const/constant.js` 里的 `DB_VERSION` 与 KV 缓存的版本不一致时，接口会直接返回 503 并提示「数据库结构需要升级，请访问一次 /init/{jwt_secret}」，而不是抛 D1 的 `no such column`。
+- 改了 `init.js` 里的迁移，记得同步改 `DB_VERSION`。
+
 ## 相关代码
 
-- `mail-worker/src/service/send-provider-service.js`：服务商适配（请求体构造、错误信息、配置解析/合并/脱敏）
+- `mail-worker/src/service/send-provider-service.js`：服务商适配（请求体构造、错误信息、配置解析/合并/脱敏、重试与主备切换、体积限制）
 - `mail-worker/src/service/send-webhook-service.js`：回调事件解析、状态映射、签名校验
 - `mail-worker/src/api/webhook-api.js`：`/api/webhooks/{provider}` 路由
 - `mail-worker/src/service/email-service.js`：渠道选择与 `sendProvider` 生成器
-- `mail-worker/src/init/init.js`：`v3_7DB` 迁移（新增 `send_providers` 字段并迁移旧 Resend Token）
+- `mail-worker/src/init/init.js`：数据库迁移（`v3_7DB`~`v3_10DB`）与 `db_migration` 登记
 - `mail-vue/src/views/sys-setting/index.vue`：系统设置界面
 - `mail-worker/test/send-provider.spec.js`：服务商请求体、配置合并与脱敏的单元测试
 - `mail-worker/test/setting-provider.worker.spec.js`：指向本地 D1 的集成测试（初始化迁移、保存/读取/删除配置）

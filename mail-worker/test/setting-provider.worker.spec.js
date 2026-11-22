@@ -37,6 +37,15 @@ describe('setting send providers', () => {
 		await settingService.refresh(c);
 	});
 
+	it('records applied migrations', async () => {
+		const rows = (await env.db.prepare('SELECT name, version FROM db_migration').all()).results;
+		const names = rows.map(row => row.name);
+		expect(names).toContain('v3_7DB');
+		expect(names).toContain('v3_9DB');
+		expect(names).toContain('v3_10DB');
+		expect(rows.every(row => row.version === 'v3.10')).toBe(true);
+	});
+
 	it('saves, masks and keeps providers', async () => {
 		await settingService.set(c, {
 			sendProviders: { 'example.com': { provider: 'mailtrap', token: 'mt_secret_token', accountId: '' } }

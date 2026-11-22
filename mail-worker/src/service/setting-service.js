@@ -41,6 +41,8 @@ const settingService = {
 		settingRow.resendTokens = JSON.parse(settingRow.resendTokens);
 		settingRow.sendProviders = sendProviderService.parseProviders(settingRow.sendProviders, settingRow.resendTokens);
 		settingRow.sendWebhookSecrets = normalizeWebhookSecrets(settingRow.sendWebhookSecrets);
+		// 记录当前代码要求的数据库版本，query 时会比对
+		settingRow.dbVersion = constant.DB_VERSION;
 		settingRow.r2Domain = '';
 		c.set('setting', settingRow);
 		await c.env.kv.put(KvConst.SETTING, JSON.stringify(settingRow));
@@ -56,6 +58,13 @@ const settingService = {
 
 		if (!setting) {
 			throw new BizError('数据库未初始化 Database not initialized.');
+		}
+
+		// 代码升级后数据库结构可能还没更新，给出明确提示而不是 D1_ERROR
+		if (setting.dbVersion !== constant.DB_VERSION) {
+			throw new BizError(t('dbUpgradeRequired', {
+				current: setting.dbVersion || 'unknown', target: constant.DB_VERSION
+			}), 503);
 		}
 
 		let domainList = c.env.domain;

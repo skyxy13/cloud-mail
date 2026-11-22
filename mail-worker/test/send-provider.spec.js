@@ -57,6 +57,22 @@ describe('send provider config', () => {
 		expect(providers['example.com']).toEqual({ provider: 'mailtrap', token: 're_secret', accountId: '' });
 	});
 
+	it('masks and preserves backup token', () => {
+		const masked = sendProviderService.maskProviders({
+			'example.com': {provider: 'resend', token: 're_123456789012345', backup: {provider: 'plunk', token: 'sk_abcdefghijklm'}}
+		});
+		expect(masked['example.com'].token).toBe('re_123456789******');
+		expect(masked['example.com'].backup.token).toBe('sk_abcdefghi******');
+
+		const merged = sendProviderService.mergeProviders(
+			{'example.com': {provider: 'resend', token: 're_real', backup: {provider: 'plunk', token: 'sk_real'}}},
+			{'example.com': {provider: 'mailtrap', token: 're_real******', backup: {provider: 'plunk', token: 'sk_real******'}}}
+		);
+		expect(merged['example.com'].provider).toBe('mailtrap');
+		expect(merged['example.com'].token).toBe('re_real');
+		expect(merged['example.com'].backup).toEqual({provider: 'plunk', token: 'sk_real', accountId: ''});
+	});
+
 	it('masks tokens', () => {
 		expect(sendProviderService.maskProviders({ 'example.com': { provider: 'plunk', token: 'sk_123456789012345' } }))
 			.toEqual({ 'example.com': { provider: 'plunk', token: 'sk_123456789******' } });
@@ -148,6 +164,57 @@ describe('provider requests', () => {
 		const result = await sendProviderService.send({ provider: 'resend', token: 're' }, message);
 		expect(calls[0].url).toContain('api.resend.com/emails');
 		expect(result.id).toBe('resend-id');
+	});
+
+	it('retries on 429 then succeeds', async () => {
+		const calls = [];
+		globalThis.fetch = vi.fn(async (url) => {
+			calls.push(String(url));
+			if (calls.length === 1) {
+				return new Response(JSON.stringify({errors: ['rate limited']}), {status: 429, headers: {'content-type': 'application/json'}});
+			}
+			return new Response(JSON.stringify({success: true, message_ids: ['ok-id']}), {status: 200, headers: {'content-type': 'application/json'}});
+		});
+
+		const result = await sendProviderService.send({provider: 'mailtrap', token: 't'}, message);
+		expect(calls.length).toBe(2);
+		expect(result.id).toBe('ok-id');
+		expect(result.provider).toBe('mailtrap');
+	});
+
+	it('fails over to the backup provider when the primary is rejected', async () => {
+		const calls = [];
+		globalThis.fetch = vi.fn(async (url) => {
+			calls.push(String(url));
+			if (String(url).includes('mailtrap')) {
+				return new Response(JSON.stringify({errors: ['invalid api key']}), {status: 403, headers: {'content-type': 'application/json'}});
+			}
+			return new Response(JSON.stringify({success: true, data: {emails: [{email: 'plunk-id', status: 'queued'}]}}), {status: 200, headers: {'content-type': 'application/json'}});
+		});
+
+		const result = await sendProviderService.send({
+			provider: 'mailtrap', token: 'bad',
+			backup: {provider: 'plunk', token: 'sk'}
+		}, message);
+
+		expect(calls.some(url => url.includes('mailtrap'))).toBe(true);
+		expect(calls.some(url => url.includes('useplunk'))).toBe(true);
+		expect(result.provider).toBe('plunk');
+		expect(result.id).toBe('plunk-id');
+	});
+
+	it('does not fail over on network errors', async () => {
+		const calls = [];
+		globalThis.fetch = vi.fn(async (url) => {
+			calls.push(String(url));
+			throw new Error('connection reset');
+		});
+
+		await expect(sendProviderService.send({
+			provider: 'mailtrap', token: 't', backup: {provider: 'plunk', token: 'sk'}
+		}, message)).rejects.toThrow(/connection reset/);
+
+		expect(calls.every(url => url.includes('mailtrap'))).toBe(true);
 	});
 
 	it('throws readable error', async () => {

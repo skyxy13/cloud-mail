@@ -1,5 +1,13 @@
 import settingService from '../service/setting-service';
 import userService from '../service/user-service';
+import constant from '../const/constant';
+
+// 按顺序执行的迁移，登记到 db_migration 表便于排查
+const migrations = [
+	'intDB', 'v2_3DB', 'v2_4DB', 'v2_5DB', 'v2_6DB', 'v2_7DB', 'v2_8DB',
+	'v3_0DB', 'v3_1DB', 'v3_2DB', 'v3_3DB', 'v3_4DB', 'v3_5DB', 'v3_6DB',
+	'v3_7DB', 'v3_8DB', 'v3_9DB', 'v3_10DB'
+];
 
 const dbInit = {
 	async init(c) {
@@ -27,9 +35,31 @@ const dbInit = {
 		await this.v3_7DB(c);
 		await this.v3_8DB(c);
 		await this.v3_9DB(c);
+		await this.v3_10DB(c);
 		await userService.initAdmin(c);
+		await this.recordMigrations(c);
 		await settingService.refresh(c);
 		return c.text('success');
+	},
+
+	// 记录已执行的迁移，便于排查线上结构版本
+	async recordMigrations(c) {
+		try {
+			await c.env.db.batch(migrations.map(name =>
+				c.env.db.prepare('INSERT OR IGNORE INTO db_migration (name, version) VALUES (?, ?)')
+					.bind(name, constant.DB_VERSION)
+			));
+		} catch (e) {
+			console.warn(`sql skip:${e.message}`);
+		}
+	},
+
+	async v3_10DB(c) {
+		try {
+			await c.env.db.prepare(`ALTER TABLE email ADD COLUMN provider TEXT NOT NULL DEFAULT ''`).run();
+		} catch (e) {
+			console.warn(`sql skip:${e.message}`);
+		}
 	},
 
 	async v3_9DB(c) {
@@ -323,6 +353,7 @@ const dbInit = {
 						type INTEGER NOT NULL DEFAULT 0,
 						status INTEGER NOT NULL DEFAULT 0,
 						resend_email_id TEXT,
+						provider TEXT NOT NULL DEFAULT '',
 						message TEXT,
 						recipient TEXT NOT NULL DEFAULT '[]',
 						cc TEXT NOT NULL DEFAULT '[]',
@@ -334,6 +365,13 @@ const dbInit = {
 						to_name TEXT NOT NULL DEFAULT '',
 						content TEXT,
 						text TEXT
+					)
+				`),
+				c.env.db.prepare(`
+					CREATE TABLE IF NOT EXISTS db_migration (
+						name TEXT PRIMARY KEY NOT NULL,
+						version TEXT NOT NULL DEFAULT '',
+						applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
 					)
 				`),
 				c.env.db.prepare(`

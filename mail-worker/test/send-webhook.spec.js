@@ -159,6 +159,20 @@ describe('send webhook', () => {
 		expect(JSON.parse(row.message).response_code).toBe(550);
 	});
 
+	it('ignores callbacks coming from another provider', async () => {
+		await env.db.prepare(`INSERT INTO email (account_id, user_id, send_email, subject, type, status, resend_email_id, provider)
+			VALUES (1, 1, 'a@example.com', 'provider check', 1, 1, 'prov-1', 'mailtrap')`).run();
+
+		const result = await sendWebhookService.handle(makeContext(JSON.stringify({
+			type: 'email.delivered', data: {email_id: 'prov-1'}
+		})), 'resend');
+
+		expect(result.updated).toBe(0);
+		expect(result.ignored).toBe(1);
+		const row = await env.db.prepare(`SELECT status FROM email WHERE resend_email_id = 'prov-1'`).first();
+		expect(row.status).toBe(1);
+	});
+
 	it('ignores duplicated events', async () => {
 		const body = JSON.stringify({events: [{event: 'delivery', message_id: 'order-1', event_id: 'evt-dup'}]});
 		const first = await sendWebhookService.handle(makeContext(body), 'mailtrap');

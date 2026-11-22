@@ -82,6 +82,7 @@ const zh = {
 	notAdmin: '输入的邮箱不是管理员邮箱',
 	emailExistDatabase: '有邮箱已存在数据库中',
 	notConfigOss: '对象存储未配置',
+	dbUpgradeRequired: '数据库结构需要升级（当前 {{current}}，代码要求 {{target}}），请访问一次 /init/{jwt_secret} 完成升级',
 	perms: {
 		"邮件": "邮件",
 		"邮件发送": "邮件发送",

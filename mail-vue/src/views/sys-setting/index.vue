@@ -540,6 +540,19 @@
           <el-input type="text" :placeholder="providerTokenPlaceholder" v-model="providerForm.token"
                     @keyup.enter="saveProvider"/>
           <div class="provider-tip">{{ $t('addSendProviderDesc') }}</div>
+          <el-divider style="margin: 14px 0 10px"/>
+          <el-select style="margin-bottom: 12px" v-model="providerForm.backupProvider"
+                     :placeholder="$t('backupProviderNone')" clearable>
+            <el-option :label="$t('backupProviderNone')" value=""/>
+            <el-option v-for="item in backupProviderOptions" :key="item.id" :label="item.name" :value="item.id"/>
+          </el-select>
+          <template v-if="providerForm.backupProvider">
+            <el-input v-if="providerFormBackupNeedAccountId" style="margin-bottom: 12px" type="text"
+                      :placeholder="$t('ahaSendAccountId')" v-model="providerForm.backupAccountId"/>
+            <el-input type="text" :placeholder="backupTokenPlaceholder" v-model="providerForm.backupToken"
+                      @keyup.enter="saveProvider"/>
+            <div class="provider-tip">{{ $t('backupProviderDesc') }}</div>
+          </template>
           <el-button type="primary" :loading="settingLoading" @click="saveProvider">{{ $t('save') }}</el-button>
         </form>
       </el-dialog>
@@ -787,6 +800,8 @@ Authorization: &lt;secret&gt;</pre>
           <el-table-column :min-width="emailColumnWidth" property="domain" :label="$t('domain')"
                            :show-overflow-tooltip="true"/>
           <el-table-column :width="130" property="providerName" :label="$t('sendProvider')"
+                           :show-overflow-tooltip="true"/>
+          <el-table-column :width="130" property="backupName" :label="$t('backupProvider')"
                            :show-overflow-tooltip="true"/>
           <el-table-column :width="tokenColumnWidth" property="token" label="Token" fixed="right"
                            :show-overflow-tooltip="true"/>
@@ -1057,6 +1072,9 @@ const providerForm = reactive({
   provider: 'resend',
   token: '',
   accountId: '',
+  backupProvider: '',
+  backupToken: '',
+  backupAccountId: '',
 })
 const webhookSecretForm = reactive({
   resend: '',
@@ -1222,6 +1240,7 @@ const providerListData = computed(() => {
     return {
       domain: key,
       providerName: providerName(providers[key].provider),
+      backupName: providers[key].backup ? providerName(providers[key].backup.provider) : '-',
       token: providers[key].token
     };
   })
@@ -1257,6 +1276,20 @@ const providerFormNeedAccountId = computed(() => {
 const providerTokenPlaceholder = computed(() => {
   const item = providerOptions.value.find(option => option.id === providerForm.provider)
   return item?.tokenHint || t('addSendProviderDesc')
+})
+
+const backupProviderOptions = computed(() =>
+  providerOptions.value.filter(item => item.id !== providerForm.provider)
+)
+
+const providerFormBackupNeedAccountId = computed(() => {
+  const item = providerOptions.value.find(option => option.id === providerForm.backupProvider)
+  return !!item?.accountId
+})
+
+const backupTokenPlaceholder = computed(() => {
+  const item = providerOptions.value.find(option => option.id === providerForm.backupProvider)
+  return item?.tokenHint || t('webhookSecretPlaceholder', {provider: item?.name || ''})
 })
 
 const providerLimitName = computed(() => {
@@ -1802,11 +1835,22 @@ function saveProvider() {
     sendProviders: {}
   }
   const domain = providerForm.domain.slice(1)
-  settingForm.sendProviders[domain] = {
+  const entry = {
     provider: providerForm.provider,
     token: providerForm.token,
     accountId: providerFormNeedAccountId.value ? providerForm.accountId : ''
   }
+
+  // 备用服务商：填了密钥才保存，且不能和主服务商相同
+  if (providerForm.backupProvider && providerForm.backupProvider !== providerForm.provider) {
+    entry.backup = {
+      provider: providerForm.backupProvider,
+      token: providerForm.backupToken,
+      accountId: providerFormBackupNeedAccountId.value ? providerForm.backupAccountId : ''
+    }
+  }
+
+  settingForm.sendProviders[domain] = entry
   editSetting(settingForm)
 }
 
@@ -1823,6 +1867,9 @@ function backupSetting() {
 function cleanProviderForm() {
   providerForm.token = ''
   providerForm.accountId = ''
+  providerForm.backupProvider = ''
+  providerForm.backupToken = ''
+  providerForm.backupAccountId = ''
 }
 
 function beforeChange() {

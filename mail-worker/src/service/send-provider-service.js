@@ -37,6 +37,18 @@ sendProviderList.forEach(item => {
 const providerIds = sendProviderList.map(item => item.id);
 const MASK = '******';
 const REQUEST_TIMEOUT = 30000;
+// 发送重试：最多 3 次，指数退避 + 抖动，避免把服务商的 429/5xx 直接抛给用户
+const RETRY_MAX = 3;
+const RETRY_BASE_DELAY = 400;
+const RETRY_MAX_DELAY = 2000;
+
+function sleep(ms) {
+	return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryableStatus(status) {
+	return status === 408 || status === 425 || status === 429 || (status >= 500 && status <= 599);
+}
 
 
 function formatSize(bytes) {
@@ -66,10 +78,50 @@ function normalizeEntry(entry) {
 	}
 	const token = typeof entry.token === 'string' ? entry.token.trim() : '';
 	if (!token) return null;
-	return {
-		provider: providerIds.includes(entry.provider) ? entry.provider : sendProviderConst.RESEND,
+
+	const provider = providerIds.includes(entry.provider) ? entry.provider : sendProviderConst.RESEND;
+	const result = {
+		provider,
 		token,
 		accountId: typeof entry.accountId === 'string' ? entry.accountId.trim() : ''
+	};
+
+	// 备用服务商：主服务商明确拒绝（4xx/5xx/429）时自动切换
+	const backup = normalizeBackup(entry.backup, provider);
+	if (backup) result.backup = backup;
+
+	return result;
+}
+
+// 表单回传的脱敏 token（xxx******）表示"不修改"，用库里已有的真实 token 还原
+function fillMaskedToken(raw, existing) {
+	if (!raw || typeof raw !== 'object') return raw;
+
+	const result = { ...raw };
+	if (typeof result.token === 'string' && result.token.includes(MASK) && existing?.token) {
+		result.token = existing.token;
+	}
+
+	if (result.backup && typeof result.backup === 'object') {
+		const backupExisting = existing?.backup;
+		result.backup = { ...result.backup };
+		if (typeof result.backup.token === 'string' && result.backup.token.includes(MASK) && backupExisting?.token) {
+			result.backup.token = backupExisting.token;
+		}
+	}
+
+	return result;
+}
+
+function normalizeBackup(backup, primaryProvider) {
+	if (!backup || typeof backup !== 'object') return null;
+	const token = typeof backup.token === 'string' ? backup.token.trim() : '';
+	const provider = backup.provider;
+	if (!token || !providerIds.includes(provider) || provider === primaryProvider) return null;
+	return {
+		provider,
+		token,
+		accountId: typeof backup.accountId === 'string' ? backup.accountId.trim() : ''
 	};
 }
 
@@ -114,7 +166,10 @@ async function requestJson(url, options, providerName) {
 	try {
 		response = await fetch(url, { ...options, signal: AbortSignal.timeout(REQUEST_TIMEOUT) });
 	} catch (e) {
-		throw new BizError(providerName + ': ' + e.message);
+		const error = new BizError(providerName + ': ' + e.message);
+		// 网络错误/超时：可以重试，但不切换备用服务商（可能已经投递）
+		error.network = true;
+		throw error;
 	}
 
 	const text = await response.text();
@@ -128,7 +183,9 @@ async function requestJson(url, options, providerName) {
 	}
 
 	if (!response.ok) {
-		throw new BizError(providerName + ' ' + response.status + ': ' + errorMessage(body, text));
+		const error = new BizError(providerName + ' ' + response.status + ': ' + errorMessage(body, text));
+		error.status = response.status;
+		throw error;
 	}
 
 	return body;
@@ -181,21 +238,7 @@ const sendProviderService = {
 		const source = toJson(incoming, {});
 
 		Object.keys(source).forEach(domain => {
-			const raw = source[domain];
-			const token = typeof raw === 'string' ? raw : raw?.token;
-			const existing = providers[domain];
-
-			// 回传的脱敏 token 表示不修改密钥，只更新服务商/账户 ID
-			if (typeof token === 'string' && token.includes(MASK) && existing) {
-				providers[domain] = {
-					provider: providerIds.includes(raw.provider) ? raw.provider : existing.provider,
-					token: existing.token,
-					accountId: typeof raw.accountId === 'string' ? raw.accountId.trim() : existing.accountId
-				};
-				return;
-			}
-
-			const entry = normalizeEntry(raw);
+			const entry = normalizeEntry(fillMaskedToken(source[domain], providers[domain]));
 			if (entry) {
 				providers[domain] = entry;
 			} else {
@@ -207,13 +250,17 @@ const sendProviderService = {
 	},
 
 	maskProviders(providers) {
+		const maskToken = token => token ? token.slice(0, 12) + MASK : '';
 		const result = {};
 		Object.keys(providers || {}).forEach(domain => {
 			const entry = providers[domain];
 			result[domain] = {
 				...entry,
-				token: entry.token ? entry.token.slice(0, 12) + MASK : ''
+				token: maskToken(entry.token)
 			};
+			if (entry.backup) {
+				result[domain].backup = { ...entry.backup, token: maskToken(entry.backup.token) };
+			}
 		});
 		return result;
 	},
@@ -224,6 +271,41 @@ const sendProviderService = {
 			throw new BizError(t('noSendProvider'));
 		}
 
+		try {
+			return await this.sendWithRetry(entry, message);
+		} catch (error) {
+			const backup = entry.backup;
+			// 只有服务商明确返回了错误码才切换备用服务商：
+			// 网络错误/超时时邮件可能已经投递，切换会导致重复发送
+			if (!backup || !error.status) throw error;
+
+			console.warn('send provider ' + entry.provider + ' failed (' + error.message + '), fallback to ' + backup.provider);
+			return await this.sendWithRetry(backup, message);
+		}
+	},
+
+	// 以指数退避重试可恢复错误（429 / 5xx / 网络错误），最多 RETRY_MAX 次
+	async sendWithRetry(entry, message) {
+		let attempt = 1;
+
+		while (true) {
+			try {
+				const result = await this.dispatch(entry, message);
+				return { ...result, provider: entry.provider };
+			} catch (error) {
+				const retryable = error.status ? isRetryableStatus(error.status) : error.network === true;
+				if (!retryable || attempt >= RETRY_MAX) throw error;
+
+				const delay = Math.min(RETRY_BASE_DELAY * Math.pow(2, attempt - 1), RETRY_MAX_DELAY);
+				console.warn('send provider ' + entry.provider + ' retry ' + attempt + '/' + (RETRY_MAX - 1)
+					+ ' after ' + delay + 'ms: ' + error.message);
+				await sleep(delay + Math.floor(Math.random() * 150));
+				attempt++;
+			}
+		}
+	},
+
+	dispatch(entry, message) {
 		if (entry.provider === sendProviderConst.MAILTRAP) return this.sendMailtrap(entry, message);
 		if (entry.provider === sendProviderConst.AHASEND) return this.sendAhaSend(entry, message);
 		if (entry.provider === sendProviderConst.PLUNK) return this.sendPlunk(entry, message);
@@ -259,7 +341,11 @@ const sendProviderService = {
 
 		if (result.error) {
 			const name = result.error.name ? result.error.name + ': ' : '';
-			throw new BizError('Resend: ' + name + (result.error.message || 'send failed'));
+			const error = new BizError('Resend: ' + name + (result.error.message || 'send failed'));
+			error.status = result.error.statusCode || null;
+			// statusCode 为空说明是连接层失败，按网络错误处理
+			if (!error.status) error.network = true;
+			throw error;
 		}
 
 		return { id: result.data?.id ?? null };

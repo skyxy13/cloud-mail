@@ -30,6 +30,12 @@ import verifyUtils from '../utils/verify-utils';
 import { notifyMailWsFromContext } from '../websocket/notify';
 import proxyService from './proxy-service';
 
+// 发件渠道标识，写入 email.provider，便于统计与回调校验
+const PROVIDER_INTERNAL = 'internal';
+const PROVIDER_CLOUDFLARE = 'cloudflare';
+// 分开发送时同时提交的请求数
+const SEND_CONCURRENCY = 3;
+
 const emailService = {
 
 	async list(c, params, userId) {
@@ -619,7 +625,7 @@ const emailService = {
 			? sendParams.receiveEmail.map(address => [address])
 			: [sendParams.receiveEmail];
 		for (const receiveEmail of recipientGroups) {
-			const emailResult = await this.saveSentEmail(c, { ...saveParams, receiveEmail });
+			const emailResult = await this.saveSentEmail(c, { ...saveParams, receiveEmail, provider: PROVIDER_INTERNAL });
 			const inboxAddresses = [...receiveEmail, ...sendParams.ccEmail, ...sendParams.bccEmail];
 			const emailRowList = await this.HandleOnSiteEmail(c, inboxAddresses, emailResult, emailResult.attList);
 			await this.forwardOnSiteEmail(c, emailRowList, { sendParams: { ...sendParams, receiveEmail } });
@@ -643,7 +649,7 @@ const emailService = {
 				return;
 			}
 			const emailResult = await this.saveSentEmail(c, {
-				...saveParams, receiveEmail, providerId: result.data.id
+				...saveParams, receiveEmail, providerId: result.data.id, provider: PROVIDER_CLOUDFLARE
 			});
 			yield { emails: [emailResult] };
 		}
@@ -678,7 +684,8 @@ const emailService = {
 			const batchEmails = [];
 			for (const item of batchItems) {
 				batchEmails.push(await this.saveSentEmail(c, {
-					...saveParams, receiveEmail: item.receiveEmail, providerId: item.id
+					...saveParams, receiveEmail: item.receiveEmail, providerId: item.id,
+					provider: sendProviderConst.RESEND
 				}));
 			}
 			yield { emails: batchEmails };
@@ -691,30 +698,50 @@ const emailService = {
 		// 附件只做一次 base64 转换，分开发送时各收件人复用
 		const attachments = await this.toProviderAttachments(sendParams.attachments);
 		const headers = this.replyHeaders(sendParams);
+		// 分开发送时并发提交，避免上百封串行等待超时；普通发送只有一个分组
+		const batchSize = separate ? SEND_CONCURRENCY : 1;
 
-		for (const receiveEmail of recipientGroups) {
-			let result;
-			try {
-				result = await sendProviderService.send(providerConfig, {
-					from: { email: sendParams.accountEmail, name: sendParams.name },
-					to: receiveEmail,
-					cc: sendParams.ccEmail,
-					bcc: sendParams.bccEmail,
-					subject: sendParams.subject,
-					text: sendParams.text,
-					html: sendParams.html,
-					headers,
-					attachments
-				});
-			} catch (error) {
-				// 分开发送遇到渠道错误即停止，已成功的记录由入口汇总。
-				if (!separate) throw error;
-				yield { error: { message: error.message } };
+		for (let start = 0; start < recipientGroups.length; start += batchSize) {
+			const groups = recipientGroups.slice(start, start + batchSize);
+			const results = await Promise.all(groups.map(async receiveEmail => {
+				try {
+					const result = await sendProviderService.send(providerConfig, {
+						from: { email: sendParams.accountEmail, name: sendParams.name },
+						to: receiveEmail,
+						cc: sendParams.ccEmail,
+						bcc: sendParams.bccEmail,
+						subject: sendParams.subject,
+						text: sendParams.text,
+						html: sendParams.html,
+						headers,
+						attachments
+					});
+					return { receiveEmail, result };
+				} catch (error) {
+					return { receiveEmail, error };
+				}
+			}));
+
+			const emails = [];
+			let failure = null;
+			for (const item of results) {
+				if (item.error) {
+					failure = failure || item.error;
+					continue;
+				}
+				emails.push(await this.saveSentEmail(c, {
+					...saveParams, receiveEmail: item.receiveEmail,
+					providerId: item.result?.id, provider: item.result?.provider
+				}));
+			}
+
+			if (emails.length > 0) yield { emails };
+			if (failure) {
+				// 已成功的记录先交给入口保存，再把错误抛给前端重试失败收件人
+				if (!separate) throw failure;
+				yield { error: { message: failure.message } };
 				return;
 			}
-			yield {
-				emails: [await this.saveSentEmail(c, { ...saveParams, receiveEmail, providerId: result?.id })]
-			};
 		}
 	},
 
@@ -724,7 +751,7 @@ const emailService = {
 			accountId, userId, name, subject, text, html, sendEmail, receiveEmail,
 			ccEmail = [], bccEmail = [],
 			providerId, messageId, sendType, useCloudflareEmail,
-			roleRow, r2Domain, attachments
+			roleRow, r2Domain, attachments, provider
 		} = params;
 		const imageDataList = params.imageDataList.map(item => ({
 			...item, contentId: `<${item.contentId.replace(/^<|>$/g, '')}>`
@@ -736,6 +763,8 @@ const emailService = {
 			type: emailConst.type.SEND,
 			// 各服务商返回的邮件 ID 统一存这里，供 webhook 回调更新投递状态
 			resendEmailId: providerId,
+			// 实际发出这封邮件的渠道，便于统计和校验回调来源
+			provider: provider || PROVIDER_INTERNAL,
 			recipient: JSON.stringify(receiveEmail.map(address => ({ address, name: '' }))),
 			cc: JSON.stringify(ccEmail.map(address => ({ address, name: '' }))),
 			bcc: JSON.stringify(bccEmail.map(address => ({ address, name: '' })))
@@ -1309,10 +1338,14 @@ const emailService = {
 
 	// fromStatuses 用于状态机保护：只允许从这些状态升级，避免乱序回调把终态改回去
 	updateEmailStatus(c, params) {
-		const { status, resendEmailId, message, fromStatuses } = params;
+		const { status, resendEmailId, message, fromStatuses, provider } = params;
 		const where = [eq(email.resendEmailId, resendEmailId)];
 		if (Array.isArray(fromStatuses)) {
 			where.push(inArray(email.status, fromStatuses));
+		}
+		// 只允许发出这封邮件的服务商回调（老数据 provider 为空时放行）
+		if (provider) {
+			where.push(or(eq(email.provider, ''), eq(email.provider, provider)));
 		}
 
 		return orm(c).update(email).set({
@@ -1323,7 +1356,7 @@ const emailService = {
 
 	async selectByResendEmailId(c, resendEmailIdList) {
 		return orm(c)
-			.select({ emailId: email.emailId, status: email.status })
+			.select({ emailId: email.emailId, status: email.status, provider: email.provider })
 			.from(email)
 			.where(inArray(email.resendEmailId, resendEmailIdList))
 			.get();
