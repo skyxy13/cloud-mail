@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --mode dev",
     "remote": "vite --mode remote",
-    "build": "vite build --mode release",
+    "build": "node scripts/check-i18n.mjs && vite build --mode release",
+    "check:i18n": "node scripts/check-i18n.mjs",
     "eo": "vite build --mode eo",
     "preview": "vite preview"
   },

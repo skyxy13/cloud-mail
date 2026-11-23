@@ -187,7 +187,7 @@ const zh = {
     sendProviderList: '已配置的发件服务',
     ahaSendAccountId: 'AhaSend 账户 ID（可选，填写后走 v2 接口）',
     sendWebhookSecret: '回调校验密钥',
-    sendWebhookSecretDesc: '填写服务商的 webhook 签名密钥后校验回调来源；留空表示不校验。回调地址：/api/webhooks/{服务商}',
+    sendWebhookSecretDesc: '填写服务商的 webhook 签名密钥后校验回调来源；留空表示不校验。回调地址：/api/webhooks/&lt;服务商&gt;',
     webhookSecretPlaceholder: '{provider} 签名密钥',
     clearAll: '清除全部',
     sendWebhookStrict: '强制校验回调',

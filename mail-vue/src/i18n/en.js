@@ -187,7 +187,7 @@ const en = {
     sendProviderList: 'Configured send providers',
     ahaSendAccountId: 'AhaSend account ID (optional, enables API v2)',
     sendWebhookSecret: 'Webhook signing secrets',
-    sendWebhookSecretDesc: 'Set a provider signing secret to verify webhook callbacks; leave empty to skip verification. Endpoint: /api/webhooks/{provider}',
+    sendWebhookSecretDesc: 'Set a provider signing secret to verify webhook callbacks; leave empty to skip verification. Endpoint: /api/webhooks/&lt;provider&gt;',
     webhookSecretPlaceholder: '{provider} signing secret',
     clearAll: 'Clear all',
     sendWebhookStrict: 'Require webhook signatures',
