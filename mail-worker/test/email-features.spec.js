@@ -1,7 +1,8 @@
-import { env } from 'cloudflare:test';
+import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { dbInit } from '../src/init/init';
 import settingService from '../src/service/setting-service';
+import constant from '../src/const/constant';
 import emailService from '../src/service/email-service';
 import sendProviderService from '../src/service/send-provider-service';
 import sendWebhookService from '../src/service/send-webhook-service';
@@ -45,6 +46,28 @@ function mockFetch(json, status = 200) {
 	});
 	return calls;
 }
+
+describe('init status endpoint', () => {
+	it('reports schema version for the frontend notice', async () => {
+		let res = await SELF.fetch('http://example.com/api/init/status');
+		let body = await res.json();
+		expect(body.code).toBe(200);
+		expect(body.data.initialized).toBe(true);
+		expect(body.data.requiredVersion).toBe(constant.DB_VERSION);
+		expect(body.data.needUpgrade).toBe(false);
+
+		// 模拟线上代码比库新：把 KV 里的版本改掉
+		const cached = await env.kv.get('setting:', {type: 'json'});
+		await env.kv.put('setting:', JSON.stringify({...cached, dbVersion: 'v3.0'}));
+		res = await SELF.fetch('http://example.com/api/init/status');
+		body = await res.json();
+		expect(body.data.needUpgrade).toBe(true);
+		expect(body.data.dbVersion).toBe('v3.0');
+
+		// 复原
+		await env.kv.put('setting:', JSON.stringify({...cached}));
+	});
+});
 
 describe('reply-to', () => {
 	const c = makeContext();

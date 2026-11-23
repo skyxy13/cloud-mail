@@ -2,6 +2,7 @@ import axios from "axios";
 import router from "@/router";
 import i18n from "@/i18n/index.js";
 import {useSettingStore} from "@/store/setting.js";
+import {checkMigration} from "@/init/migration-notice.js";
 
 let http = axios.create({
     baseURL: import.meta.env.VITE_BASE_URL
@@ -46,6 +47,10 @@ http.interceptors.response.use((res) => {
                 })
                 reject(data)
 
+            } else if (data.code === 503) {
+                // 数据库需要初始化/迁移：弹窗说明怎么处理，而不是只报一句错误
+                checkMigration(true).catch(() => {})
+                reject(data)
             } else if (data.code === 502) {
                 ElMessage({
                     dangerouslyUseHTMLString: true,

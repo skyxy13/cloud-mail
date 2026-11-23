@@ -108,6 +108,9 @@
 - 所有迁移在 `/init/{jwt_secret}` 里按顺序执行，执行结果登记到 `db_migration`（`name` / `version` / `applied_at`），方便排查线上到底是哪个版本。
 - `const/constant.js` 里的 `DB_VERSION` 与 KV 缓存的版本不一致时，接口会直接返回 503 并提示「数据库结构需要升级，请访问一次 /init/{jwt_secret}」，而不是抛 D1 的 `no such column`。
 - 改了 `init.js` 里的迁移，记得同步改 `DB_VERSION`。
+- 前端启动时会请求 `GET /api/init/status`（无需鉴权），返回 `{initialized, dbVersion, requiredVersion, needUpgrade}`：
+  未初始化或版本不一致时弹窗提示「去访问 `/api/init/<jwt_secret>`」，并在弹窗关掉前撤掉首屏 loading；
+  任意接口返回 `code: 503`（就是数据库需要升级）时也会再次弹窗，用户点「我知道了」后本次会话不再重复打扰。
 
 ## 相关代码
 
