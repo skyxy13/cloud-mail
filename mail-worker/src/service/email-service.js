@@ -781,7 +781,7 @@ const emailService = {
 			status: useCloudflareEmail ? emailConst.status.DELIVERED : emailConst.status.SENT,
 			type: emailConst.type.SEND,
 			// 各服务商返回的邮件 ID 统一存这里，供 webhook 回调更新投递状态
-			resendEmailId: providerId,
+			providerEmailId: providerId,
 			// 实际发出这封邮件的渠道，便于统计和校验回调来源
 			provider: provider || PROVIDER_INTERNAL,
 			recipient: JSON.stringify(receiveEmail.map(address => ({ address, name: '' }))),
@@ -1402,8 +1402,8 @@ const emailService = {
 
 	// fromStatuses 用于状态机保护：只允许从这些状态升级，避免乱序回调把终态改回去
 	updateEmailStatus(c, params) {
-		const { status, resendEmailId, message, fromStatuses, provider } = params;
-		const where = [eq(email.resendEmailId, resendEmailId)];
+		const { status, providerEmailId, message, fromStatuses, provider } = params;
+		const where = [eq(email.providerEmailId, providerEmailId)];
 		if (Array.isArray(fromStatuses)) {
 			where.push(inArray(email.status, fromStatuses));
 		}
@@ -1418,11 +1418,11 @@ const emailService = {
 		}).where(and(...where)).returning().get();
 	},
 
-	async selectByResendEmailId(c, resendEmailIdList) {
+	async selectByProviderEmailId(c, providerEmailIdList) {
 		return orm(c)
 			.select({ emailId: email.emailId, status: email.status, provider: email.provider })
 			.from(email)
-			.where(inArray(email.resendEmailId, resendEmailIdList))
+			.where(inArray(email.providerEmailId, providerEmailIdList))
 			.get();
 	},
 

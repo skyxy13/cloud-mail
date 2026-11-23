@@ -327,13 +327,13 @@ const sendWebhookService = {
 
 		for (const id of ids) {
 			const emailRow = await emailService.updateEmailStatus(c, {
-				resendEmailId: id, status, message, fromStatuses, provider
+				providerEmailId: id, status, message, fromStatuses, provider
 			});
 			if (emailRow) return emailRow;
 		}
 
 		// 没更新成功：可能是已经处于更高优先级的状态（乱序回调），也可能是未知邮件
-		const exists = await emailService.selectByResendEmailId(c, ids);
+		const exists = await emailService.selectByProviderEmailId(c, ids);
 		if (exists) {
 			if (exists.provider && exists.provider !== provider) {
 				console.warn(provider + ' webhook: provider mismatch, email was sent by ' + exists.provider);

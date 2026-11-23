@@ -24,6 +24,7 @@
 ```
 
 > 旧版本只有 `resend_tokens`（域名 → Resend Token）。初始化接口会把它自动迁移成上面的结构，升级后不需要手动重填。
+> 现在配置只写 `send_providers`，`resend_tokens` 已是历史字段（只读兜底，不再更新）。
 
 ## 发件渠道优先级
 
@@ -69,7 +70,7 @@
 - **状态只升不降**：`SENT < DELAYED < DELIVERED < COMPLAINED < BOUNCED < FAILED`，只允许升级，乱序到达的旧事件（例如 `email.sent` 晚于 `email.delivered`）不会把终态改回去。
 - **重复投递去重**：Mailtrap `event_id`、AhaSend `webhook_id`、Resend `svix-id`、Plunk `emailId + 时间戳` 会写入 KV（保留 7 天），重复事件直接忽略。
 - Mailtrap 支持 JSON 和 JSON Lines 两种载荷，两种都能解析。
-- 服务商返回的邮件 ID 会先归一化（去掉 `<>` 和 `@域名` 后缀）再匹配 `email.resend_email_id`，所以 Mailtrap 的 `<uuid@域名>` 也能对上。
+- 服务商返回的邮件 ID 存在 `email.provider_email_id`（原 `resend_email_id`，v3_12DB 改名），会先归一化（去掉 `<>` 和 `@域名` 后缀）再匹配 `email.provider_email_id`，所以 Mailtrap 的 `<uuid@域名>` 也能对上。
 - 未知邮件、重复投递、测试事件都会返回 200 并记录日志，避免服务商因连续收到 500 而熔断关闭 webhook。
 - **Plunk**：webhook 由 workflow 触发。需要在 Plunk 里建 workflow，触发器选 `email.delivery` / `email.bounce` / `email.complaint`，动作选 Webhook，URL 填本站回调地址；要鉴权就在 Headers 里加 `{"Authorization": "Bearer <密钥>"}`，并在本站填同一个密钥。
 - **AhaSend**：在控制台 Webhooks 页面新建 endpoint，勾选 `message.*` 事件，即可拿到 `whsec_` 签名密钥。

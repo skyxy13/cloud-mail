@@ -6,7 +6,7 @@ import constant from '../const/constant';
 const migrations = [
 	'intDB', 'v2_3DB', 'v2_4DB', 'v2_5DB', 'v2_6DB', 'v2_7DB', 'v2_8DB',
 	'v3_0DB', 'v3_1DB', 'v3_2DB', 'v3_3DB', 'v3_4DB', 'v3_5DB', 'v3_6DB',
-	'v3_7DB', 'v3_8DB', 'v3_9DB', 'v3_10DB', 'v3_11DB'
+	'v3_7DB', 'v3_8DB', 'v3_9DB', 'v3_10DB', 'v3_11DB', 'v3_12DB'
 ];
 
 const dbInit = {
@@ -37,6 +37,7 @@ const dbInit = {
 		await this.v3_9DB(c);
 		await this.v3_10DB(c);
 		await this.v3_11DB(c);
+		await this.v3_12DB(c);
 		await userService.initAdmin(c);
 		await this.recordMigrations(c);
 		await settingService.refresh(c);
@@ -50,6 +51,15 @@ const dbInit = {
 				c.env.db.prepare('INSERT OR IGNORE INTO db_migration (name, version) VALUES (?, ?)')
 					.bind(name, constant.DB_VERSION)
 			));
+		} catch (e) {
+			console.warn(`sql skip:${e.message}`);
+		}
+	},
+
+	// 老库把 email.resend_email_id 改名成通用的 provider_email_id（新库直接就是新名字）
+	async v3_12DB(c) {
+		try {
+			await c.env.db.prepare(`ALTER TABLE email RENAME COLUMN resend_email_id TO provider_email_id`).run();
 		} catch (e) {
 			console.warn(`sql skip:${e.message}`);
 		}
@@ -407,7 +417,7 @@ const dbInit = {
 						is_del INTEGER DEFAULT 0 NOT NULL,
 						type INTEGER NOT NULL DEFAULT 0,
 						status INTEGER NOT NULL DEFAULT 0,
-						resend_email_id TEXT,
+						provider_email_id TEXT,
 						provider TEXT NOT NULL DEFAULT '',
 						message TEXT,
 						recipient TEXT NOT NULL DEFAULT '[]',

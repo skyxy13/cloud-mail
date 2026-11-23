@@ -26,6 +26,7 @@ export const setting = sqliteTable('setting', {
 	ruleEmail: text('rule_email').default('').notNull(),
 	ruleType: integer('rule_type').default(0).notNull(),
 	loginOpacity: integer('login_opacity').default(0.88),
+	// 历史字段：v3_7DB 已迁移到 send_providers，现在只读不写（兼容未完成迁移的老库）
 	resendTokens: text('resend_tokens').default("{}").notNull(),
 	// 通用发件服务配置：{"example.com":{"provider":"resend","token":"re_xxx","accountId":""}}
 	sendProviders: text('send_providers').default("{}").notNull(),

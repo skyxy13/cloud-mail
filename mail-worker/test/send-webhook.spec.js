@@ -134,33 +134,33 @@ describe('send webhook', () => {
 	});
 
 	it('keeps delivered status when events arrive out of order', async () => {
-		await env.db.prepare(`INSERT INTO email (account_id, user_id, send_email, subject, type, status, resend_email_id)
+		await env.db.prepare(`INSERT INTO email (account_id, user_id, send_email, subject, type, status, provider_email_id)
 			VALUES (1, 1, 'a@example.com', 'order test', 1, 1, 'order-1')`).run();
 
 		await sendWebhookService.handle(makeContext(JSON.stringify({
 			events: [{event: 'delivery', message_id: 'order-1', event_id: 'evt-1'}]
 		})), 'mailtrap');
-		let row = await env.db.prepare(`SELECT status FROM email WHERE resend_email_id = 'order-1'`).first();
+		let row = await env.db.prepare(`SELECT status FROM email WHERE provider_email_id = 'order-1'`).first();
 		expect(row.status).toBe(2);
 
 		// 乱序到达的 email.sent 不应把 DELIVERED 改回 SENT
 		await sendWebhookService.handle(makeContext(JSON.stringify({
 			type: 'email.sent', data: {email_id: 'order-1'}
 		})), 'resend');
-		row = await env.db.prepare(`SELECT status FROM email WHERE resend_email_id = 'order-1'`).first();
+		row = await env.db.prepare(`SELECT status FROM email WHERE provider_email_id = 'order-1'`).first();
 		expect(row.status).toBe(2);
 
 		// 迟到的退信仍然可以覆盖 DELIVERED
 		await sendWebhookService.handle(makeContext(JSON.stringify({
 			events: [{event: 'bounce', message_id: 'order-1', response_code: 550, event_id: 'evt-2'}]
 		})), 'mailtrap');
-		row = await env.db.prepare(`SELECT status, message FROM email WHERE resend_email_id = 'order-1'`).first();
+		row = await env.db.prepare(`SELECT status, message FROM email WHERE provider_email_id = 'order-1'`).first();
 		expect(row.status).toBe(3);
 		expect(JSON.parse(row.message).response_code).toBe(550);
 	});
 
 	it('ignores callbacks coming from another provider', async () => {
-		await env.db.prepare(`INSERT INTO email (account_id, user_id, send_email, subject, type, status, resend_email_id, provider)
+		await env.db.prepare(`INSERT INTO email (account_id, user_id, send_email, subject, type, status, provider_email_id, provider)
 			VALUES (1, 1, 'a@example.com', 'provider check', 1, 1, 'prov-1', 'mailtrap')`).run();
 
 		const result = await sendWebhookService.handle(makeContext(JSON.stringify({
@@ -169,7 +169,7 @@ describe('send webhook', () => {
 
 		expect(result.updated).toBe(0);
 		expect(result.ignored).toBe(1);
-		const row = await env.db.prepare(`SELECT status FROM email WHERE resend_email_id = 'prov-1'`).first();
+		const row = await env.db.prepare(`SELECT status FROM email WHERE provider_email_id = 'prov-1'`).first();
 		expect(row.status).toBe(1);
 	});
 

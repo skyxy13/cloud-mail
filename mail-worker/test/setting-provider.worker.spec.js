@@ -2,6 +2,7 @@ import { env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import { dbInit } from '../src/init/init';
 import settingService from '../src/service/setting-service';
+import constant from '../src/const/constant';
 import emailService from '../src/service/email-service';
 
 function makeContext() {
@@ -43,7 +44,19 @@ describe('setting send providers', () => {
 		expect(names).toContain('v3_7DB');
 		expect(names).toContain('v3_9DB');
 		expect(names).toContain('v3_10DB');
-		expect(rows.every(row => row.version === 'v3.10')).toBe(true);
+		expect(names).toContain('v3_12DB');
+		expect(rows.every(row => row.version === constant.DB_VERSION)).toBe(true);
+	});
+
+	it('renames legacy email column idempotently', async () => {
+		const columns = (await env.db.prepare('PRAGMA table_info(email)').all()).results.map(row => row.name);
+		expect(columns).toContain('provider_email_id');
+		expect(columns).not.toContain('resend_email_id');
+
+		// 已经改名后再跑一次迁移不应抛错
+		await dbInit.v3_12DB(c);
+		const again = (await env.db.prepare('PRAGMA table_info(email)').all()).results.map(row => row.name);
+		expect(again).toContain('provider_email_id');
 	});
 
 	it('saves, masks and keeps providers', async () => {

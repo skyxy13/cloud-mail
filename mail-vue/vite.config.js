@@ -55,7 +55,21 @@ export default defineConfig(({mode}) => {
             target: 'es2022',
             outDir: env.VITE_OUT_DIR || 'dist',
             emptyOutDir: true,
-            assetsInclude: ['**/*.json']
+            assetsInclude: ['**/*.json'],
+            // 分析页用的 echarts 单独成块：体积大但不常变，
+            // 单独拆出去后改业务代码不会让这个块失效，返回旧用户能命中缓存。
+            // 注意：不要把 element-plus / vue 等全量塞进 vendor 块，
+            // 那会把只有懒加载页面用到的模块提前拉进首屏（实测首屏 305kB -> 811kB）。
+            chunkSizeWarningLimit: 600,
+            rollupOptions: {
+                output: {
+                    manualChunks(id) {
+                        if (id.includes('node_modules/echarts/') || id.includes('node_modules/zrender/')) {
+                            return 'echarts'
+                        }
+                    }
+                }
+            }
         }
     }
 })

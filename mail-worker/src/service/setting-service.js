@@ -202,13 +202,8 @@ const settingService = {
 			if (!resendTokens[domain] || incomingProviders[domain] !== undefined) return;
 			incomingProviders[domain] = { provider: 'resend', token: resendTokens[domain] };
 		});
+		// 只用 send_providers 存配置，resend_tokens 是历史字段（v3_7DB 已迁移），不再写入
 		const sendProviders = sendProviderService.mergeProviders(settingData.sendProviders, incomingProviders);
-		const legacyResendTokens = {};
-		Object.keys(sendProviders).forEach(domain => {
-			if (sendProviders[domain].provider === 'resend' && sendProviders[domain].token) {
-				legacyResendTokens[domain] = sendProviders[domain].token;
-			}
-		});
 
 		if (Array.isArray(params.emailPrefixFilter)) {
 			params.emailPrefixFilter = params.emailPrefixFilter + '';
@@ -233,7 +228,6 @@ const settingService = {
 			mergedWebhookSecrets[provider] = value.trim();
 		});
 
-		params.resendTokens = JSON.stringify(legacyResendTokens);
 		params.sendProviders = JSON.stringify(sendProviders);
 		params.sendWebhookSecrets = JSON.stringify(mergedWebhookSecrets);
 

@@ -21,7 +21,8 @@ export const email = sqliteTable('email', {
 	messageId: text('message_id').default(''),
 	type: integer('type').default(0).notNull(),
 	status: integer('status').default(0).notNull(),
-	resendEmailId: text('resend_email_id'),
+	// 各服务商返回的邮件 ID（原 resend_email_id，v3_12DB 改名）
+	providerEmailId: text('provider_email_id'),
 	// 实际发件的渠道：internal / cloudflare / resend / mailtrap / ahasend / plunk
 	provider: text('provider').default('').notNull(),
 	// 独立回复地址（Reply-To），为空表示不设置
