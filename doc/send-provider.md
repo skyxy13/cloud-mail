@@ -49,9 +49,19 @@
 ### 各服务商注意事项
 
 - **Sendflare**：`Authorization: Bearer <token>`；免费版 3,000 封/月（100 封/天、2 个域名）。
-  实测要点（2026-11 用真实 key 验证）：`to` 只接受**字符串**（传数组返回 `10033 Bad request parameters`）；
-  `from` 支持 `名字 <邮箱>` 格式；发件域名必须先在 Sendflare 后台验证，否则 `10030 The sending domain is invalid`；
-  成功响应里 `data.emailId` 是这封邮件的 ID，失败时为空串。
+
+  实测要点（2026-11 用真实 token 跑通，端点 `POST https://api.sendflare.com/v1/send`）：
+
+  | 行为 | 实测结果 |
+  | --- | --- |
+  | `to` 类型 | **必须是字符串**；传数组返回 `10033 Bad request parameters`（本项目逐人提交，正好对上） |
+  | `from` 格式 | 支持 `名字 <邮箱>`，显示名会保留 |
+  | 发件域名 | 必须先在 Sendflare 后台验证，否则 `10030 The sending domain is invalid` |
+  | 附件 | 支持 base64 + `contentType` + `disposition`（`inline` 时带 `contentId`） |
+  | 体积上限 | 单附件 **21MB 通过、22MB 报 `10023 Email too large`**；代码里卡在 20MB |
+  | 成功响应 | `{"code":0,"success":true,"data":{"emailId":"<uuid>"}}`，邮件 ID 取 `data.emailId` |
+  | 失败响应 | HTTP 恒为 200，真结果看 `success`：`10034`=token 无效、`10033`=参数错、`10030`=发件域名未验证、`10023`=体积超限 |
+  | token 自检 | `curl -s "https://api.sendflare.com/v1/contact?appId=x&page=1&pageSize=1" -H "Authorization: Bearer <token>"` → `success:true` 即有效 |
   正文只有 `body`（HTML）一个字段，纯文本邮件会被包一层 `<div>`；单封接口的 `to` 是字符串（本项目本来就按收件人逐个提交，正好对上）。
   返回里只有 `requestId`、没有单封 message id；**目前没有 webhook 回调**，所以状态只会停在「已发送」，不会回写已投递/退信。
   官方文档未公开单封大小与附件数量上限，这里先按 10 个 / 10MB 保守校验。

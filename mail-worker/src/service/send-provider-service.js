@@ -28,8 +28,9 @@ const providerLimitTable = {
 	mailtrap: { maxAttachments: 10, maxTotalBytes: 10 * 1024 * 1024 },
 	ahasend: { maxAttachments: 10, maxTotalBytes: 20 * 1024 * 1024 },
 	plunk: { maxAttachments: 10, maxTotalBytes: 10 * 1024 * 1024 },
-	// Sendflare 文档未给出单封大小/附件上限，这里按 10MB 保守限制，避免上线才发现被拒
-	sendflare: { maxAttachments: 10, maxTotalBytes: 10 * 1024 * 1024 }
+	// Sendflare 文档没写上限，实测（2026-11）：单附件 21MB 通过、22MB 返回 10023 Email too large，
+	// 这里卡 20MB 留余量；附件个数官方未限制，前端/后端统一按 10 个兜住
+	sendflare: { maxAttachments: 10, maxTotalBytes: 20 * 1024 * 1024 }
 };
 
 // 把体积限制挂到列表项上，前端可直接展示
