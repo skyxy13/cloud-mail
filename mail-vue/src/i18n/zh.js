@@ -1,6 +1,7 @@
 const zh = {
     inbox: '收件箱',
     compose: '撰写邮件',
+    editorFallbackTip: '富文本编辑器加载失败，已切换为纯文本模式（内容仍可正常发送）',
     drafts: '草稿箱',
     sent: '已发送',
     starred: '星标邮件',

@@ -1,7 +1,9 @@
 <template>
-  <div class="editor-box" :class="showLoading ? 'editor-box-loading' : ''">
+  <div class="editor-box" :class="[showLoading ? 'editor-box-loading' : '', loadFailed ? 'editor-box-fallback' : '']">
     <loading class="loading" v-if="showLoading"/>
-    <textarea v-else style="outline: none" :id="editorId" ref="editorRef"></textarea>
+    <div class="editor-fallback-tip" v-if="loadFailed">{{ t('editorFallbackTip') }}</div>
+    <textarea :class="loadFailed ? 'editor-fallback' : ''" style="outline: none" :id="editorId" ref="editorRef"
+              v-model="fallbackContent" @input="onFallbackInput"></textarea>
   </div>
 </template>
 
@@ -30,12 +32,15 @@ const props = defineProps({
 });
 
 
-const {locale} = useI18n()
+const {locale, t} = useI18n()
 const emit = defineEmits(['change','focus']);
 const editor = shallowRef(null);
 const isInitialized = ref(false);
 const editorRef = ref(null);
 const showLoading = ref(false);
+// TinyMCE 加载/初始化失败时降级成纯文本框，避免整块编辑区点不动、写不了邮件
+const loadFailed = ref(false);
+const fallbackContent = ref('');
 const uiStore = useUiStore();
 const settingStore = useSettingStore();
 
@@ -48,6 +53,10 @@ onBeforeUnmount(() => {
 });
 
 watch(() => props.defValue, (newValue) => {
+  if (loadFailed.value) {
+    fallbackContent.value = newValue || '';
+    return;
+  }
   if (editor.value && editor.value.getContent() !== newValue) {
     editor.value.setContent(newValue);
   }
@@ -69,23 +78,57 @@ const language = computed(() => {
 function clearEditor() {
   if (editor.value) {
     editor.value.setContent('');
+  } else {
+    fallbackContent.value = '';
   }
+}
+
+function onFallbackInput() {
+  emit('change', fallbackContent.value, fallbackContent.value.replace(/<[^>]+>/g, ''));
 }
 
 function initTinyMCE() {
   if (window.tinymce) {
     initEditor();
-  } else {
-    showLoading.value = true;
-    const script = document.createElement('script');
-    script.src = '/tinymce/tinymce.min.js';
-    script.onload = () => initEditor();
-    document.head.appendChild(script);
-    showLoading.value = false;
+    return;
   }
+
+  showLoading.value = true;
+  const script = document.createElement('script');
+  script.src = '/tinymce/tinymce.min.js';
+  script.onload = () => {
+    try {
+      initEditor();
+    } catch (e) {
+      console.warn('tinymce init failed:', e?.message);
+      enableFallback();
+    }
+  };
+  // 脚本被拦/404 时不能一直卡着，退化成纯文本框
+  script.onerror = () => {
+    console.warn('tinymce script failed to load');
+    enableFallback();
+  };
+  document.head.appendChild(script);
+  showLoading.value = false;
+}
+
+function enableFallback() {
+  loadFailed.value = true;
+  showLoading.value = false;
+  fallbackContent.value = props.defValue || '';
 }
 
 function initEditor() {
+  try {
+    createEditor();
+  } catch (e) {
+    console.warn('tinymce init failed:', e?.message);
+    enableFallback();
+  }
+}
+
+function createEditor() {
   window.tinymce.init({
     selector: `#${props.editorId}`,
     statusbar: false,
@@ -159,12 +202,19 @@ function initEditor() {
 
 function focus() {
   nextTick(() => {
-    editor.value.focus()
+    if (editor.value) {
+      editor.value.focus()
+    } else {
+      editorRef.value?.focus?.()
+    }
   })
 }
 
 function getContent() {
-  return editor.value.getContent()
+  if (editor.value) {
+    return editor.value.getContent()
+  }
+  return fallbackContent.value || ''
 }
 
 
@@ -224,6 +274,36 @@ function destroyEditor() {
 
 :deep(.tox .tox-edit-area::before) {
   display: none;
+}
+
+/* TinyMCE 加载失败时的纯文本降级输入框：必须铺满整块区域，否则用户点正文区域没反应 */
+.editor-box-fallback {
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-fallback {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--el-text-color-primary);
+  background: var(--el-bg-color);
+}
+
+.editor-fallback-tip {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--el-color-warning);
+  background: var(--el-color-warning-light-9);
 }
 
 </style>
