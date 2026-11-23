@@ -36,6 +36,8 @@ not_found_handling = "single-page-application"
 run_worker_first = [ "/api/*", "/oss/*", "/static/*", "/attachments/*", "/proxy", "/realtime" ]
 
 [triggers]
+# 注意：Workers 免费 plan 的 cron 最小间隔是 1 小时，写 */5 之类的表达式会导致部署直接失败；
+# 定时发送的分钟级精度由 Durable Object alarm（MailHub 的 scheduler 实例）负责，这里只做每小时兜底扫描
 crons = ["0 * * * *"]	# Hourly cron; resetDaySendCount only runs at UTC 0
 
 [[durable_objects.bindings]]
