@@ -16,8 +16,11 @@ import utc from 'dayjs/plugin/utc';
 
 dayjs.extend(utc);
 
-// webhook 校验密钥按服务商配置，留空表示不校验
-const webhookSecretProviders = sendProviderService.sendProviderList.map(item => item.id);
+// webhook 校验密钥按服务商配置，留空表示不校验；
+// Sendflare 目前没有提供 webhook 回调，不进这个列表（避免设置页出现填了没用的输入框）
+const webhookSecretProviders = sendProviderService.sendProviderList
+	.map(item => item.id)
+	.filter(id => id !== 'sendflare');
 
 function normalizeDomainQuota(value) {
 	let source = {};

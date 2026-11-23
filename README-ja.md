@@ -59,7 +59,7 @@
 
 - **💻 レスポンシブデザイン**: デスクトップとほとんどのモバイルブラウザに自動で対応します。
 
-- **📧 メール送信**: Cloudflare Email と Resend / Mailtrap / AhaSend / Plunk を統合し、予約送信・Reply-To・抑止リスト・ドメイン別の 1 日あたり送信上限に対応します。
+- **📧 メール送信**: Cloudflare Email と Resend / Mailtrap / AhaSend / Plunk / Sendflare を統合し、予約送信・Reply-To・抑止リスト・ドメイン別の 1 日あたり送信上限に対応します。
 
 - **🛡️ 管理者機能**: RBAC ベースのアクセス制御により、ユーザーとメールを管理できます。
 
@@ -91,7 +91,7 @@
 
 - **UI フレームワーク**: [Element Plus](https://element-plus.org/)
 
-- **メール送信**: [Cloudflare Email](https://developers.cloudflare.com/email-service/) / [Resend](https://resend.com/) / [Mailtrap](https://mailtrap.io/) / [AhaSend](https://ahasend.com/) / [Plunk](https://www.useplunk.com/)
+- **メール送信**: [Cloudflare Email](https://developers.cloudflare.com/email-service/) / [Resend](https://resend.com/) / [Mailtrap](https://mailtrap.io/) / [AhaSend](https://ahasend.com/) / [Plunk](https://www.useplunk.com/) / [Sendflare](https://sendflare.com/)
 
 - **キャッシュ**: [Cloudflare KV](https://developers.cloudflare.com/kv/)
 

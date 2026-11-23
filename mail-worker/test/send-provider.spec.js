@@ -159,6 +159,32 @@ describe('provider requests', () => {
 		expect(body.attachments[0]).toMatchObject({ filename: 'a.txt', contentType: 'text/plain', disposition: 'attachment' });
 	});
 
+	it('sendflare body and failure handling', async () => {
+		const calls = mockFetch({requestId: 'req-1', code: 200, success: true, message: 'ok'});
+		const result = await sendProviderService.send({provider: 'sendflare', token: 'tok'}, {
+			...message, replyTo: 'reply@example.com'
+		});
+
+		expect(calls[0].url).toBe('https://api.sendflare.com/v1/send');
+		expect(calls[0].options.headers.Authorization).toBe('Bearer tok');
+		const body = JSON.parse(calls[0].options.body);
+		expect(body.from).toBe('noreply@example.com');
+		expect(body.to).toBe('a@test.com');
+		expect(body.subject).toBe('Hi');
+		expect(body.body).toBe('<p>hello</p>');
+		expect(body.cc).toEqual(['cc@test.com']);
+		expect(body.bcc).toEqual(['bcc@test.com']);
+		expect(body.replyTo).toEqual(['reply@example.com']);
+		expect(body.attachments[0]).toMatchObject({filename: 'a.txt', contentType: 'text/plain', disposition: 'attachment'});
+		expect(result.id).toBe('req-1');
+		expect(result.provider).toBe('sendflare');
+
+		// success=false 要抛错，不能当成功
+		mockFetch({requestId: 'req-2', success: false, message: 'domain not verified'});
+		await expect(sendProviderService.send({provider: 'sendflare', token: 'tok'}, message))
+			.rejects.toThrow(/domain not verified/);
+	});
+
 	it('resend body via sdk', async () => {
 		const calls = mockFetch({ id: 'resend-id' });
 		const result = await sendProviderService.send({ provider: 'resend', token: 're' }, message);

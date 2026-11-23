@@ -7,7 +7,8 @@ export const sendProviderConst = {
 	RESEND: 'resend',
 	MAILTRAP: 'mailtrap',
 	AHASEND: 'ahasend',
-	PLUNK: 'plunk'
+	PLUNK: 'plunk',
+	SENDFLARE: 'sendflare'
 };
 
 // accountId 表示除 API Key 外还需要账户 ID（AhaSend v2 接口需要）
@@ -15,7 +16,8 @@ export const sendProviderList = [
 	{ id: sendProviderConst.RESEND, name: 'Resend', tokenHint: 're_xxxxxxxx', accountId: false },
 	{ id: sendProviderConst.MAILTRAP, name: 'Mailtrap', tokenHint: 'Mailtrap API Token', accountId: false },
 	{ id: sendProviderConst.AHASEND, name: 'AhaSend', tokenHint: 'AhaSend API Key', accountId: true },
-	{ id: sendProviderConst.PLUNK, name: 'Plunk', tokenHint: 'sk_xxxxxxxx', accountId: false }
+	{ id: sendProviderConst.PLUNK, name: 'Plunk', tokenHint: 'sk_xxxxxxxx', accountId: false },
+	{ id: sendProviderConst.SENDFLARE, name: 'Sendflare', tokenHint: 'Sendflare API Token', accountId: false }
 ];
 
 // 各服务商的单封邮件体积限制（正文 + 附件，未编码前的字节数），用于发件前校验：
@@ -25,7 +27,9 @@ const providerLimitTable = {
 	resend: { maxAttachments: 10, maxTotalBytes: 40 * 1024 * 1024 },
 	mailtrap: { maxAttachments: 10, maxTotalBytes: 10 * 1024 * 1024 },
 	ahasend: { maxAttachments: 10, maxTotalBytes: 20 * 1024 * 1024 },
-	plunk: { maxAttachments: 10, maxTotalBytes: 10 * 1024 * 1024 }
+	plunk: { maxAttachments: 10, maxTotalBytes: 10 * 1024 * 1024 },
+	// Sendflare 文档未给出单封大小/附件上限，这里按 10MB 保守限制，避免上线才发现被拒
+	sendflare: { maxAttachments: 10, maxTotalBytes: 10 * 1024 * 1024 }
 };
 
 // 把体积限制挂到列表项上，前端可直接展示
@@ -309,6 +313,7 @@ const sendProviderService = {
 		if (entry.provider === sendProviderConst.MAILTRAP) return this.sendMailtrap(entry, message);
 		if (entry.provider === sendProviderConst.AHASEND) return this.sendAhaSend(entry, message);
 		if (entry.provider === sendProviderConst.PLUNK) return this.sendPlunk(entry, message);
+		if (entry.provider === sendProviderConst.SENDFLARE) return this.sendSendflare(entry, message);
 		return this.sendResend(entry, message);
 	},
 
@@ -459,6 +464,43 @@ const sendProviderService = {
 		}
 
 		return { id: sent?.id ?? null };
+	},
+
+	// Sendflare：POST https://api.sendflare.com/v1/send，Bearer 认证，
+	// 单封接口的 to 是字符串，正文只有 body(HTML)，抄送密送 replyTo 都是数组
+	async sendSendflare({ token }, message) {
+		const body = {
+			from: message.from.email,
+			to: message.to[0],
+			subject: message.subject,
+			body: message.html || '<div>' + escapeHtml(message.text || '').replace(/\r?\n/g, '<br>') + '</div>',
+			cc: message.cc || [],
+			bcc: message.bcc || [],
+			replyTo: message.replyTo ? [message.replyTo] : []
+		};
+
+		if (message.attachments?.length > 0) {
+			body.attachments = message.attachments.map(item => ({
+				filename: item.filename,
+				content: item.content,
+				contentType: item.contentType,
+				disposition: item.contentId ? 'inline' : 'attachment',
+				...(item.contentId ? { contentId: stripContentId(item.contentId) } : {})
+			}));
+		}
+
+		const result = await requestJson('https://api.sendflare.com/v1/send', {
+			method: 'POST',
+			headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+			body: JSON.stringify(body)
+		}, 'Sendflare');
+
+		if (result.success === false) {
+			throw new BizError('Sendflare: ' + (result.message || 'send failed'));
+		}
+
+		// 没有单封邮件 ID，用 requestId 关联日志
+		return { id: result.requestId ?? null };
 	},
 
 	// Plunk：POST https://api.useplunk.com/v1/send，只接受 HTML 正文，没有抄送密送字段

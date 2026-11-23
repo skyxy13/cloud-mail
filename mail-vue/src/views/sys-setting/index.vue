@@ -1330,6 +1330,7 @@ const defaultProviderOptions = [
   {id: 'mailtrap', name: 'Mailtrap', tokenHint: 'Mailtrap API Token', accountId: false},
   {id: 'ahasend', name: 'AhaSend', tokenHint: 'AhaSend API Key', accountId: true},
   {id: 'plunk', name: 'Plunk', tokenHint: 'sk_xxxxxxxx', accountId: false},
+  {id: 'sendflare', name: 'Sendflare', tokenHint: 'Sendflare API Token', accountId: false},
 ]
 
 const providerOptions = computed(() => setting.value.sendProviderList || defaultProviderOptions)

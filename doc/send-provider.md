@@ -44,8 +44,14 @@
 | Mailtrap | https://mailtrap.io → Sending Domains → API Tokens | `POST https://send.api.mailtrap.io/api/send` | 支持 | 支持 |
 | AhaSend | https://ahasend.com 控制台 → API Keys | v1：`POST /v1/email/send`；v2：`POST /v2/accounts/{accountId}/messages` | 支持 | v2 支持（走 conversation 接口），v1 不支持 |
 | Plunk | https://app.useplunk.com → Settings → API Keys（`sk_` 开头） | `POST https://api.useplunk.com/v1/send` | 支持（10 个 / 10MB） | 接口没有抄送密送字段 |
+| Sendflare | https://app.sendflare.com → API Token | `POST https://api.sendflare.com/v1/send` | 支持（base64 + inline） | 支持 |
 
 ### 各服务商注意事项
+
+- **Sendflare**：`Authorization: Bearer <token>`；免费版 3,000 封/月（100 封/天、2 个域名）。
+  正文只有 `body`（HTML）一个字段，纯文本邮件会被包一层 `<div>`；单封接口的 `to` 是字符串（本项目本来就按收件人逐个提交，正好对上）。
+  返回里只有 `requestId`、没有单封 message id；**目前没有 webhook 回调**，所以状态只会停在「已发送」，不会回写已投递/退信。
+  官方文档未公开单封大小与附件数量上限，这里先按 10 个 / 10MB 保守校验。
 
 - **Resend**：域名需在 Resend 后台验证。使用「分开发送」时走批量接口，一次最多 100 位收件人且不支持附件（包含正文内嵌图片）；普通发送不受此限制。投递状态可通过 Resend Webhook 回写（默认地址 `/api/webhooks`，需在 Resend 后台配置）。
 - **Mailtrap**：需要 `send.api.mailtrap.io`（Sending / 事务邮件）的 API Token，免费版只能向自己的测试收件箱投递，正式投递需要付费套餐并验证域名。

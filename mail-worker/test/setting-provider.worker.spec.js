@@ -67,7 +67,7 @@ describe('setting send providers', () => {
 		let setting = await settingService.get(c);
 		expect(setting.sendProviders['example.com'].provider).toBe('mailtrap');
 		expect(setting.sendProviders['example.com'].token).toBe('mt_secret_to******');
-		expect(setting.sendProviderList.map(item => item.id)).toEqual(['resend', 'mailtrap', 'ahasend', 'plunk']);
+		expect(setting.sendProviderList.map(item => item.id)).toEqual(['resend', 'mailtrap', 'ahasend', 'plunk', 'sendflare']);
 
 		// 脱敏值回传不应覆盖真实 token
 		await settingService.set(c, {
