@@ -8,7 +8,10 @@
 - 限制：至少 1 分钟之后、最多 30 天以内；**暂不支持附件**（附件要存 R2，当前直接拒绝并提示）。
 - 到点发送仍会走完整校验（权限、配额、抑制名单、体积限制），所以「定时成功」不等于「一定能发出」，失败会记录原因。
 - 失败最多重试 3 次，之后状态置为失败（`status = 3`），用户可在弹窗里看到并重新安排。
-- cron 触发：`wrangler.toml` 里新增 `*/5 * * * *`，即最多延迟 5 分钟；原有的 `0 * * * *` 继续跑每小时的清理/统计任务。
+- 触发方式：**Durable Object alarm**（`MailHub` 的 `scheduler` 实例）。创建/取消定时任务后会把闹钟设到最近的待发送时间，到点精确触发，
+  然后在每小时 cron 里再扫一遍兜底。之所以不用 `*/5` cron：**Workers 免费 plan 的 cron 最小间隔是 1 小时**，配 `*/5` 会导致部署直接失败
+  （已踩过：CF 构建失败、站点停留在旧版本）。付费 plan 下可以自己把 `*/5` 加回 `wrangler.toml` 的 crons。
+- 时间按 UTC 存储（前端提交 ISO 带时区偏移，展示时转回本地时间）。
 - 接口：`POST /api/email/schedule`、`GET /api/email/schedule/list`、`DELETE /api/email/schedule/cancel?scheduleId=`。
 
 ## 草稿箱

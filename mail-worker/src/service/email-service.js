@@ -957,13 +957,13 @@ const emailService = {
 	},
 
 	async domainUsedToday(c, domain) {
-		const key = kvConst.DOMAIN_SEND_DAY_COUNT + domain + ':' + dayjs().format('YYYY-MM-DD');
+		const key = kvConst.DOMAIN_SEND_DAY_COUNT + domain + ':' + dayjs.utc().format('YYYY-MM-DD');
 		return Number(await c.env.kv.get(key)) || 0;
 	},
 
 	async addDomainQuotaUsage(c, domain, count) {
 		if (!domain || !count) return;
-		const key = kvConst.DOMAIN_SEND_DAY_COUNT + domain + ':' + dayjs().format('YYYY-MM-DD');
+		const key = kvConst.DOMAIN_SEND_DAY_COUNT + domain + ':' + dayjs.utc().format('YYYY-MM-DD');
 		const used = Number(await c.env.kv.get(key)) || 0;
 		await c.env.kv.put(key, String(used + count), { expirationTtl: 60 * 60 * 48 });
 	},

@@ -5,6 +5,7 @@ import userContext from '../security/user-context';
 
 app.post('/email/schedule', async (c) => {
 	const scheduleId = await scheduleService.create(c, await c.req.json(), userContext.getUserId(c));
+	await scheduleService.arm(c);
 	return c.json(result.ok(scheduleId));
 });
 
@@ -15,5 +16,6 @@ app.get('/email/schedule/list', async (c) => {
 
 app.delete('/email/schedule/cancel', async (c) => {
 	await scheduleService.cancel(c, c.req.query('scheduleId'), userContext.getUserId(c));
+	await scheduleService.arm(c);
 	return c.json(result.ok());
 });

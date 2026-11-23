@@ -46,12 +46,14 @@ export default {
 	},
 	email: email,
 	async scheduled(c, env, ctx) {
-		// 每 5 分钟处理到期的定时邮件
+		// 付费 plan 可配 */5 精确扫描；免费 plan cron 最小间隔 1 小时，
+		// 分钟级精度由 Durable Object alarm 负责，小时任务里再做一次兜底
 		if (c.cron === '*/5 * * * *') {
 			await scheduleService.runDue({ env })
 			return;
 		}
 
+		await scheduleService.runDue({ env })
 		await verifyRecordService.clearRecord({ env })
 		await userService.resetDaySendCount({ env })
 		await emailService.completeReceiveAll({ env })

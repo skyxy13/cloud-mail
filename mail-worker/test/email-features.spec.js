@@ -207,6 +207,34 @@ describe('scheduled send', () => {
 		expect(list).toHaveLength(0);
 	});
 
+	it('stores scheduled time as UTC and exposes the next due time', async () => {
+		const iso = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString();
+		await scheduleService.create(c, {
+			accountId: 1, sendEmail: 'a@example.com', receiveEmail: ['b@test.com'],
+			subject: 'utc', content: '<p>x</p>', sendTime: iso
+		}, 12);
+
+		const next = await scheduleService.nextDueTime(c);
+		expect(next).toBe(iso.slice(0, 19).replace('T', ' '));
+	});
+
+	it('arms the scheduler durable object', async () => {
+		const stub = env.ws.get(env.ws.idFromName('scheduler'));
+		const sendTime = new Date(Date.now() + 2 * 60 * 60 * 1000);
+		const pad = n => String(n).padStart(2, '0');
+		const local = `${sendTime.getUTCFullYear()}-${pad(sendTime.getUTCMonth() + 1)}-${pad(sendTime.getUTCDate())}T`
+			+ `${pad(sendTime.getUTCHours())}:${pad(sendTime.getUTCMinutes())}:${pad(sendTime.getUTCSeconds())}Z`;
+
+		await scheduleService.create(c, {
+			accountId: 1, sendEmail: 'a@example.com', receiveEmail: ['b@test.com'],
+			subject: 'arm', content: '<p>x</p>', sendTime: local
+		}, 13);
+
+		const armed = await stub.arm();
+		expect(typeof armed).toBe('number');
+		expect(Math.abs(armed - Date.parse(local))).toBeLessThan(500);
+	});
+
 	it('rejects bad send times', async () => {
 		await expect(scheduleService.create(c, {sendTime: 'not-a-date'}, 9)).rejects.toThrow();
 		await expect(scheduleService.create(c, {sendTime: new Date(Date.now() + 1000).toISOString()}, 9)).rejects.toThrow();

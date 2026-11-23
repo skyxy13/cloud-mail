@@ -12,6 +12,9 @@ import userContext from '../security/user-context';
 import domainUtils from '../utils/domain-uitls';
 import sendProviderService from './send-provider-service';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+
+dayjs.extend(utc);
 
 // webhook 校验密钥按服务商配置，留空表示不校验
 const webhookSecretProviders = sendProviderService.sendProviderList.map(item => item.id);
@@ -260,7 +263,7 @@ const settingService = {
 	// 各域名今天已发出的封数（KV 计数），用于设置页展示配额使用情况
 	async domainQuotaUsage(c, domainList) {
 		const usage = {};
-		const date = dayjs().format('YYYY-MM-DD');
+		const date = dayjs.utc().format('YYYY-MM-DD');
 		for (const item of domainList || []) {
 			const domain = String(item).replace(/^@/, '');
 			usage[domain] = Number(await c.env.kv.get(KvConst.DOMAIN_SEND_DAY_COUNT + domain + ':' + date)) || 0;

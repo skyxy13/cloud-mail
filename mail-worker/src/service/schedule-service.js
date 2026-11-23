@@ -3,6 +3,10 @@ import emailSchedule from '../entity/schedule';
 import emailService from './email-service';
 import { and, asc, eq, inArray, lte } from 'drizzle-orm';
 import dayjs from 'dayjs';
+import utc from 'dayjs/plugin/utc';
+
+// Worker 线上是 UTC，本地 dev 是机器时区；定时相关的读写统一按 UTC，避免 8 小时偏差
+dayjs.extend(utc);
 import BizError from '../error/biz-error';
 import { t } from '../i18n/i18n';
 
@@ -16,6 +20,9 @@ const SCHEDULE_STATUS = {
 const MAX_ATTEMPTS = 3;
 const MAX_AHEAD_DAYS = 30;
 const FORMAT = 'YYYY-MM-DD HH:mm:ss';
+// 定时器挂在 MailHub 这个 Durable Object 上（免费 plan 的 cron 只能按小时，
+// 分钟级精度靠 DO alarm 实现；每小时 cron 只做兜底扫描）
+const SCHEDULER_HUB = 'scheduler';
 
 // 定时发送：保存发件参数，cron 到点回放 emailService.send
 const scheduleService = {
@@ -23,12 +30,13 @@ const scheduleService = {
 	status: SCHEDULE_STATUS,
 
 	async create(c, params, userId) {
-		const sendTime = dayjs(params.sendTime);
+		// 前端提交 ISO 时间串（带时区偏移），没有时区的按 UTC 处理
+		const sendTime = dayjs.utc(params.sendTime);
 		if (!sendTime.isValid()) {
 			throw new BizError(t('invalidSendTime'));
 		}
 
-		const now = dayjs();
+		const now = dayjs.utc();
 		if (sendTime.isBefore(now.add(1, 'minute'))) {
 			throw new BizError(t('sendTimeTooEarly'));
 		}
@@ -52,6 +60,26 @@ const scheduleService = {
 		}).returning().get();
 
 		return row.scheduleId;
+	},
+
+	// 下一个待发送时间（UTC 字符串），没有则返回 null
+	async nextDueTime(c) {
+		const row = await orm(c).select({ sendTime: emailSchedule.sendTime })
+			.from(emailSchedule)
+			.where(eq(emailSchedule.status, SCHEDULE_STATUS.PENDING))
+			.orderBy(asc(emailSchedule.sendTime))
+			.get();
+		return row?.sendTime || null;
+	},
+
+	// 让 DO 按最近的任务重设 alarm；没有任务就清掉
+	async arm(c) {
+		if (!c.env?.ws) return;
+		try {
+			await c.env.ws.getByName(SCHEDULER_HUB).arm();
+		} catch (e) {
+			console.warn('arm scheduler failed: ' + e.message);
+		}
 	},
 
 	async list(c, userId) {
@@ -97,7 +125,7 @@ const scheduleService = {
 
 	// cron 调用：发送到期的定时邮件，失败最多重试 MAX_ATTEMPTS 次
 	async runDue(c) {
-		const nowStr = dayjs().format(FORMAT);
+		const nowStr = dayjs.utc().format(FORMAT);
 		const rows = await orm(c).select().from(emailSchedule)
 			.where(and(eq(emailSchedule.status, SCHEDULE_STATUS.PENDING), lte(emailSchedule.sendTime, nowStr)))
 			.limit(20)

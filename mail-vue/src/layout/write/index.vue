@@ -454,7 +454,13 @@ function openSchedule() {
 
 function loadScheduleList() {
   emailScheduleList().then(list => {
-    scheduleList.value = list || []
+    // 服务端存的是 UTC 时间，展示成本地时间
+    scheduleList.value = (list || []).map(item => ({
+      ...item,
+      sendTime: item.sendTime
+        ? dayjs.utc(item.sendTime.replace(' ', 'T')).local().format('YYYY-MM-DD HH:mm')
+        : ''
+    }))
   }).catch(() => {})
 }
 
@@ -478,7 +484,8 @@ async function submitSchedule() {
   form.content = editor.value.getContent()
   scheduleLoading.value = true
   try {
-    const payload = {...toRaw(form), sendTime: scheduleTime.value}
+    // 带上时区偏移，避免服务端（UTC）把本地时间当 UTC
+    const payload = {...toRaw(form), sendTime: dayjs(scheduleTime.value).toISOString()}
     delete payload.attachments
     delete payload.serverId
     await emailSchedule(payload)
