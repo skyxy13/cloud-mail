@@ -1,7 +1,10 @@
 <template>
   <div class="editor-box" :class="[showLoading ? 'editor-box-loading' : '', loadFailed ? 'editor-box-fallback' : '']">
     <loading class="loading" v-if="showLoading"/>
-    <div class="editor-fallback-tip" v-if="loadFailed">{{ t('editorFallbackTip') }}</div>
+    <div class="editor-fallback-tip" v-if="loadFailed">
+      <span>{{ t('editorFallbackTip') }}</span>
+      <a class="editor-fallback-retry" @click.stop="retryLoad">{{ t('retryLoadEditor') }}</a>
+    </div>
     <textarea :class="loadFailed ? 'editor-fallback' : ''" style="outline: none" :id="editorId" ref="editorRef"
               v-model="fallbackContent" @input="onFallbackInput"></textarea>
   </div>
@@ -41,6 +44,30 @@ const showLoading = ref(false);
 // TinyMCE 加载/初始化失败时降级成纯文本框，避免整块编辑区点不动、写不了邮件
 const loadFailed = ref(false);
 const fallbackContent = ref('');
+// 富文本编辑器静态资源：本站优先，失败自动切 CDN
+const EDITOR_VERSION = '7.9.1';
+const editorSources = [
+  {
+    name: 'local',
+    src: `/tinymce/tinymce.min.js?v=${EDITOR_VERSION}`,
+    baseUrl: '/tinymce',
+    localAssets: true
+  },
+  {
+    name: 'jsdelivr',
+    src: `https://cdn.jsdelivr.net/npm/tinymce@${EDITOR_VERSION}/tinymce.min.js`,
+    baseUrl: `https://cdn.jsdelivr.net/npm/tinymce@${EDITOR_VERSION}`,
+    localAssets: false
+  },
+  {
+    name: 'unpkg',
+    src: `https://unpkg.com/tinymce@${EDITOR_VERSION}/tinymce.min.js`,
+    baseUrl: `https://unpkg.com/tinymce@${EDITOR_VERSION}`,
+    localAssets: false
+  }
+];
+let currentSource = editorSources[0];
+const loadError = ref('');
 const uiStore = useUiStore();
 const settingStore = useSettingStore();
 
@@ -63,8 +90,11 @@ watch(() => props.defValue, (newValue) => {
 });
 
 watch(() => [uiStore.dark, settingStore.lang], () => {
+  if (loadFailed.value) {
+    return;
+  }
   destroyEditor();
-  initEditor();
+  initTinyMCE();
 });
 
 const language = computed(() => {
@@ -89,28 +119,71 @@ function onFallbackInput() {
 
 function initTinyMCE() {
   if (window.tinymce) {
-    initEditor();
+    if (!safeInit(currentSource)) {
+      enableFallback();
+    }
     return;
   }
 
+  loadEditorScript(0);
+}
+
+// 按顺序尝试：本站静态文件（带版本号绕过坏缓存）→ jsdelivr → unpkg，
+// 三个都失败才降级成纯文本，避免某些网络/插件把 /tinymce/ 拦掉就彻底写不了邮件
+function loadEditorScript(index) {
+  if (index >= editorSources.length) {
+    enableFallback();
+    return;
+  }
+
+  const source = editorSources[index];
+  currentSource = source;
   showLoading.value = true;
+
   const script = document.createElement('script');
-  script.src = '/tinymce/tinymce.min.js';
+  script.src = source.src;
+  script.async = true;
   script.onload = () => {
-    try {
-      initEditor();
-    } catch (e) {
-      console.warn('tinymce init failed:', e?.message);
-      enableFallback();
+    showLoading.value = false;
+    if (!safeInit(source)) {
+      loadError.value = 'init:' + source.name;
+      try {
+        window.tinymce = undefined;
+      } catch (e) {
+        // ignore
+      }
+      loadEditorScript(index + 1);
     }
   };
-  // 脚本被拦/404 时不能一直卡着，退化成纯文本框
   script.onerror = () => {
-    console.warn('tinymce script failed to load');
-    enableFallback();
+    showLoading.value = false;
+    loadError.value = 'load:' + source.name;
+    console.warn('富文本编辑器脚本加载失败：' + source.name);
+    loadEditorScript(index + 1);
   };
   document.head.appendChild(script);
-  showLoading.value = false;
+}
+
+function safeInit(source) {
+  try {
+    createEditor(source);
+    return true;
+  } catch (e) {
+    console.warn('富文本编辑器初始化失败：' + (e?.message || e));
+    return false;
+  }
+}
+
+// 用户在降级提示条上点「重新加载编辑器」时再试一次
+function retryLoad() {
+  loadFailed.value = false;
+  loadError.value = '';
+  try {
+    window.tinymce = undefined;
+  } catch (e) {
+    // ignore
+  }
+  initTinyMCE();
 }
 
 function enableFallback() {
@@ -119,18 +192,12 @@ function enableFallback() {
   fallbackContent.value = props.defValue || '';
 }
 
-function initEditor() {
-  try {
-    createEditor();
-  } catch (e) {
-    console.warn('tinymce init failed:', e?.message);
-    enableFallback();
-  }
-}
-
-function createEditor() {
+function createEditor(source) {
+  // CDN 来源：语言包和皮肤都跟着 CDN 走（npm 包里没有中文语言包，退回英文）
+  const cdnAssets = !source?.localAssets;
   window.tinymce.init({
     selector: `#${props.editorId}`,
+    base_url: source?.baseUrl,
     statusbar: false,
     height: "100%",
     auto_focus: true,
@@ -138,7 +205,7 @@ function createEditor() {
     //remove_script_host: false, // 阻止删除 URL 中的域名
     forced_root_block: 'div',
     skin: `${uiStore.dark ? 'oxide-dark' : 'oxide'}`,
-    content_css: `/tinymce/css/index.css,${uiStore.dark ? 'dark' : 'default'}`,
+    content_css: cdnAssets ? false : '/tinymce/css/index.css',
     content_style: `:root {
          --scrollbar-track-color: ${uiStore.dark ? '#141414' : '#FFFFFF'};
          --scrollbar-thumb-color: ${uiStore.dark ? '#8D9095' : '#A8ABB2'};
@@ -148,14 +215,15 @@ function createEditor() {
     toolbar_mode: 'scrolling',
     font_size_formats: '8px 10px 12px 14px 16px 18px 24px 36px',
     emoticons_search: false,
-    language: language.value,
-    language_load: true,
+    language: cdnAssets ? 'en' : language.value,
+    language_load: !cdnAssets,
     menubar: false,
     license_key: 'gpl',
     noneditable_class: 'mceNonEditable',
     setup: (ed) => {
       editor.value = ed;
       ed.on('init', () => {
+        loadFailed.value = false;
         ed.setContent(props.defValue);
         isInitialized.value = true;
       });
@@ -300,10 +368,19 @@ function destroyEditor() {
 
 .editor-fallback-tip {
   flex: 0 0 auto;
+  display: flex;
+  gap: 10px;
+  align-items: center;
   padding: 4px 12px;
   font-size: 12px;
   color: var(--el-color-warning);
   background: var(--el-color-warning-light-9);
+}
+
+.editor-fallback-retry {
+  color: var(--el-color-primary);
+  cursor: pointer;
+  text-decoration: underline;
 }
 
 </style>

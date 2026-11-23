@@ -2,6 +2,7 @@ const en = {
     inbox: 'Inbox',
     compose: 'Compose',
     editorFallbackTip: 'The rich text editor failed to load; plain text mode is active. Your message can still be sent.',
+    retryLoadEditor: 'Reload editor',
     drafts: 'Drafts',
     sent: 'Sent',
     starred: 'Starred',
