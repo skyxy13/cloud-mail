@@ -168,7 +168,7 @@ describe('provider requests', () => {
 		expect(calls[0].url).toBe('https://api.sendflare.com/v1/send');
 		expect(calls[0].options.headers.Authorization).toBe('Bearer tok');
 		const body = JSON.parse(calls[0].options.body);
-		expect(body.from).toBe('noreply@example.com');
+		expect(body.from).toBe('Demo <noreply@example.com>');
 		expect(body.to).toBe('a@test.com');
 		expect(body.subject).toBe('Hi');
 		expect(body.body).toBe('<p>hello</p>');
@@ -177,6 +177,11 @@ describe('provider requests', () => {
 		expect(body.replyTo).toEqual(['reply@example.com']);
 		expect(body.attachments[0]).toMatchObject({filename: 'a.txt', contentType: 'text/plain', disposition: 'attachment'});
 		expect(result.id).toBe('req-1');
+
+		// 成功响应里有 data.emailId 时用它当邮件 ID
+		mockFetch({requestId: 'req-2', code: 0, success: true, data: {emailId: 'mail-9'}});
+		const withId = await sendProviderService.send({provider: 'sendflare', token: 'tok'}, message);
+		expect(withId.id).toBe('mail-9');
 		expect(result.provider).toBe('sendflare');
 
 		// success=false 要抛错，不能当成功

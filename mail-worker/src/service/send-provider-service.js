@@ -467,10 +467,11 @@ const sendProviderService = {
 	},
 
 	// Sendflare：POST https://api.sendflare.com/v1/send，Bearer 认证，
-	// 单封接口的 to 是字符串，正文只有 body(HTML)，抄送密送 replyTo 都是数组
+	// 实测（2026-11）：to 只接受字符串（传数组返回 10033 Bad request parameters），
+	// from 支持 "名字 <邮箱>" 格式，正文只有 body(HTML)，cc/bcc/replyTo 都是数组
 	async sendSendflare({ token }, message) {
 		const body = {
-			from: message.from.email,
+			from: formatFrom(message.from),
 			to: message.to[0],
 			subject: message.subject,
 			body: message.html || '<div>' + escapeHtml(message.text || '').replace(/\r?\n/g, '<br>') + '</div>',
@@ -496,11 +497,15 @@ const sendProviderService = {
 		}, 'Sendflare');
 
 		if (result.success === false) {
-			throw new BizError('Sendflare: ' + (result.message || 'send failed'));
+			// 业务错误（10030 域名无效 / 10033 参数错误…）属于"服务商明确拒绝"：
+			// 标记为 400 不会重试，但允许主备切换时换备用服务商再试
+			const error = new BizError('Sendflare: ' + (result.message || 'send failed') + ' (' + result.code + ')');
+			error.status = 400;
+			throw error;
 		}
 
-		// 没有单封邮件 ID，用 requestId 关联日志
-		return { id: result.requestId ?? null };
+		// 成功时 data.emailId 是这封邮件的 ID，没有就退回 requestId 方便排查
+		return { id: result.data?.emailId || result.requestId || null };
 	},
 
 	// Plunk：POST https://api.useplunk.com/v1/send，只接受 HTML 正文，没有抄送密送字段
