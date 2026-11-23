@@ -77,6 +77,30 @@
 - **Mailtrap**：Webhooks → Create New Webhook，区域选 Email Live Sending（Transactional 流），选事件后可在详情里查看签名密钥。
 - **Resend**：Webhooks → Add Endpoint，URL 填 `https://你的域名/api/webhooks/resend`，签名密钥同样以 `whsec_` 开头。
 
+## 用 Cloudflare 自己的 Email Sending 发件（可选）
+
+代码里已经支持：只看绑定名是不是 `email`（`const useCloudflareEmail = !!c.env.email`）。只要部署时存在这个绑定，
+**所有站外发件都会优先走 Cloudflare，域名上的服务商配置会被忽略**（系统设置里「发件服务」会显示「Cloudflare 邮件发送：已启用」）。
+
+### 启用步骤
+
+1. Cloudflare 控制台 → Email → Email Routing，把发件域名接入并完成 DNS 验证（MX / SPF / DKIM）。
+2. `mail-worker/wrangler.toml` 把注释打开：
+   ```toml
+   [[send_email]]
+   name = "email"
+   ```
+3. 重新部署，然后 `/api/setting/query` 里的 `hasCfEmail` 会变成 `true`。
+
+### 限制（决定能不能真的用）
+
+- **Email Sending 目前是 Beta，发给任意收件人需要 Workers Paid 计划**；免费 / 仅 Email Routing 的情况下只能发给
+  账号内**已验证的目的地址**（verified destination addresses），也就是基本只能发给自己。
+- 没有投递回执 / webhook：本项目里走 Cloudflare 渠道的邮件会直接记为「已投递」，回调相关的状态机不参与。
+- 附件、抄送密送、Reply-To 都支持（`send_email` 绑定参数）。
+
+结论：**对外给客户发信不建议用 Cloudflare**（除非升级 Workers Paid 且接受 Beta），继续用 Resend / Mailtrap / AhaSend / Plunk。
+
 ## 重试与主备切换
 
 - **重试**：服务商返回 408 / 425 / 429 / 5xx 或出现网络错误时，最多重试 3 次，间隔 400ms → 800ms 指数退避并带抖动；仍失败才把错误抛给用户。

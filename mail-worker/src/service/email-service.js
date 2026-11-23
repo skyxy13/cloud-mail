@@ -871,6 +871,10 @@ const emailService = {
 			sendForm.html = params.html;
 		}
 
+		if (params.replyTo) {
+			sendForm.reply_to = params.replyTo;
+		}
+
 		const attachments = await this.toCloudflareAttachments(params.attachments);
 		if (attachments.length > 0) {
 			sendForm.attachments = attachments;
